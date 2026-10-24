@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **The notch on any edge.** Bring the notch to the bottom, left or right edge of the screen (drag it there or
+  throw it) and it hangs from that edge just like it does from the top: slide it along, pull it away to tear it
+  off. It remembers which edge it was on.
+
+### Fixed
+- **A free notch couldn't go near the bottom of the screen.** It stopped a few hundred pixels short (most
+  noticeable on 1440p and larger screens). It now goes all the way down, and in the lower half of the screen its
+  cards open upwards so they stay on screen.
+
 ## [2.1.0]
 
 ### Fixed

@@ -137,10 +137,11 @@ exclusive full-screen ones). *Look* switches between Dark (like a real notch) an
 
 Hover the notch for a moment with nothing playing on it and it says *Click to open wheel*.
 
-**Moving the notch.** Drag it along the top edge to slide it sideways. Pull it down and it stretches like a drop of
-liquid until it tears off; then put it anywhere. Let go while it's moving and it's thrown: it glides, bounces off
-the sides and bottom of the screen, and merges back into the top edge if it flies (or is dragged) up to it. It
-stays where you left it, next time too. A **middle click** on it (press the scroll wheel) sends it back to the
+**Moving the notch.** It can hang from any edge of the screen: top, bottom, left or right. Drag it along its edge
+to slide it. Pull it away from the edge and it stretches like a drop of liquid until it tears off; then put it
+anywhere, right down to the bottom of the screen (in the lower half its cards open upwards). Bring it near an
+edge, or throw it at one (let go while it's moving and it glides), and it merges into that edge. It stays where
+you left it, next time too. A **middle click** on it (press the scroll wheel) sends it back to the
 middle of the top edge; so does *Put the notch back in the middle* in its right-click menu.
 
 **Calls ringing in** are noticed two ways: a call app's own "incoming call" window (its title says who's calling),

@@ -9,9 +9,9 @@ Hover it for the details (now playing: art, title, progress and ⏮ ⏯ ⏭); wi
 hover says "Click to open wheel". Click it, or scroll on it, to open the rotary. Right-click for timers, screen
 assist and to customise what it shows.
 
-It can be moved: drag it along the top edge, or pull it down until it tears off like a drop of liquid and put it
-anywhere (throw it and it glides, bouncing off the screen's edges; bring it near the top and it merges back in).
-A middle click (the scroll wheel) sends it home to the middle of the top edge.
+It can be moved: drag it along its edge, or pull it away until it tears off like a drop of liquid and put it
+anywhere (throw it and it glides). Bring it near any edge of the screen — top, bottom, left or right — and it merges
+into that edge and hangs from it. A middle click (the scroll wheel) sends it home to the middle of the top edge.
 
 A call ringing in (Discord, Teams, …) opens a card on its own: who's calling, Accept and Decline. While on a
 call, hover for Mute / Deafen and Leave.
@@ -28,7 +28,7 @@ from dataclasses import replace
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QGuiApplication, QImage, QLinearGradient,
-                           QPainter, QPainterPath, QPen, QPixmap)
+                           QPainter, QPainterPath, QPen, QPixmap, QTransform)
 from PySide6.QtWidgets import QMenu, QWidget
 
 from ..live import LiveState, NowPlaying
@@ -47,6 +47,8 @@ CALL_BUTTONS = {"Discord": [("mute", "Mute"), ("deafen", "Deafen"), ("leave", "L
 PAUSED_SHOW_SECONDS = 120          # a paused song stays on the notch this long
 HOVER_HINT = "Click to open wheel"
 HOVER_HINT_SECONDS = 0.9           # a hover this long, with nothing else on the notch, shows the hint
+EDGES = ("top", "bottom", "left", "right")
+AWAY = {"top": (0, 1), "bottom": (0, -1), "left": (1, 0), "right": (-1, 0)}   # from each edge into the screen
 
 DEFAULT_OPTIONS = {"clock": "time", "clock_24h": None, "media": True, "media_art": True, "clips": True, "calls": True,
                    "privacy": True, "battery": True, "look": "dark", "alerts_over_games": True}
@@ -85,7 +87,7 @@ class NotchWindow(QWidget):
     media_command = Signal(str)      # "play_pause" | "next" | "previous"
     timer_done = Signal()
     call_command = Signal(str, str)  # (app, "mute" | "deafen" | "leave" | "accept" | "decline")
-    moved = Signal(object)           # where it was put: {"docked", "x", "y"} (None = back home in the middle)
+    moved = Signal(object)           # where it was put: {"docked", "edge", "x", "y", "up"} (None = back home)
     customize = Signal()             # "Customise the notch…" from its menu
     assist = Signal()                # "Solve what's on screen" from its menu
 
@@ -103,8 +105,8 @@ class NotchWindow(QWidget):
     MARGIN = 14.0
     SHOULDER = 8.0
     FLOAT_PAD = 12.0         # room above a free-floating notch for its shadow
-    TEAR = 70.0              # pull it this far down from the top edge and it comes away
-    DOCK_SNAP = 16.0         # a free notch this close to the top edge merges back into it
+    TEAR = 70.0              # pull it this far away from its edge and it comes away
+    DOCK_SNAP = 16.0         # a free notch this close to an edge of the screen merges into it
     DRAG_START = 5.0         # a press that moves less than this is a click
 
     def __init__(self):
@@ -165,13 +167,15 @@ class NotchWindow(QWidget):
         self.press = Spring(0.0, 420.0, 30.0)       # squish on click
         self.lit = Spring(0.0, 200.0, 26.0)
         self.card = Spring(0.0, 320.0, 32.0)        # 0 = compact, 1 = hover card
-        self.pull = Spring(0.0, 520.0, 22.0)        # stretched down from the top edge (px), snaps back on release
+        self.pull = Spring(0.0, 520.0, 22.0)        # stretched away from its edge (px), snaps back on release
         self.wob = Spring(0.0, 300.0, 9.0)          # liquid wobble after tearing off, merging or bouncing
         self._springs = (self.w_s, self.h_s, self.r_s, self.fade, self.prog, self.press, self.lit, self.card,
                          self.pull, self.wob)
 
-        # where it is: hanging from the top edge (docked) or floating free; _pos is the window's top-left
-        self.docked = True
+        # where it is: hanging from an edge of the screen ("top", "bottom", "left", "right") or floating free
+        # (None; then it grows downwards, or upwards in the lower half of the screen); _pos is the window's top-left
+        self.edge: str | None = "top"
+        self._up = False
         self.position: dict | None = None           # saved spot (None = home: the middle of the top edge)
         self._pos = QPointF(0.0, 0.0)
         self._drag: dict | None = None
@@ -291,23 +295,32 @@ class NotchWindow(QWidget):
         screen = None
         if pos is not None:
             try:
-                screen = QGuiApplication.screenAt(QPoint(int(pos["x"]), int(pos["y"]) + 2))
-            except (TypeError, ValueError):
+                x, y = float(pos["x"]), float(pos["y"])
+                edge = pos.get("edge", "top") if pos.get("docked", True) else None
+                ax, ay = AWAY.get(edge, (0, -1 if pos.get("up") else 1))
+                screen = QGuiApplication.screenAt(QPoint(int(x + 2 * ax), int(y + 2 * ay)))
+            except (TypeError, ValueError, AttributeError):
                 screen = None
         if screen is None:
             pos = None
             screen = QGuiApplication.primaryScreen()
         if screen is None:
             return
-        g = screen.availableGeometry()
-        if pos is None or pos.get("docked", True):
-            self.docked = True
-            cx = g.center().x() + (1 if g.width() % 2 else 0) if pos is None else float(pos["x"])
-            self._set_pos(cx - self.width() / 2, g.top())
+        g = QRectF(screen.availableGeometry())
+        if pos is None:
+            self.edge = "top"
+            home = self._edge_pos("top", self._home_x(g), g)
+            self._set_pos(home.x(), home.y())
+        elif pos.get("docked", True):
+            self.edge = pos.get("edge") if pos.get("edge") in EDGES else "top"
+            along = float(pos["x"]) if self.edge in ("top", "bottom") else float(pos["y"])
+            at = self._edge_pos(self.edge, along, g)
+            self._set_pos(at.x(), at.y())
         else:
-            self.docked = False
-            self._set_pos(*self._clamp_free(float(pos["x"]) - self.width() / 2,
-                                            float(pos["y"]) - self.FLOAT_PAD * self.s, QRectF(g)))
+            self.edge = None
+            self._up = bool(pos.get("up"))
+            y = float(pos["y"]) - (self.height() - self.FLOAT_PAD * self.s if self._up else self.FLOAT_PAD * self.s)
+            self._set_pos(*self._clamp_free(float(pos["x"]) - self.width() / 2, y, g))
 
     def is_home(self) -> bool:
         return self.position is None
@@ -318,11 +331,11 @@ class NotchWindow(QWidget):
         if screen is None:
             return
         self._drag, self._vel = None, None
-        g = screen.availableGeometry()
-        target = QPointF(g.center().x() + (1 if g.width() % 2 else 0) - self.width() / 2, g.top())
-        if not self.docked:
+        g = QRectF(screen.availableGeometry())
+        if self.edge != "top":
             self.wob.velocity += 6.0
-        self.docked = True
+        self.edge = "top"
+        target = self._edge_pos("top", self._home_x(g), g)
         self.pull.snap(0.0)
         self.position = None
         if self.reduce_motion or not self.isVisible():
@@ -334,38 +347,128 @@ class NotchWindow(QWidget):
             self._wake()
 
     # -- moving it
+    @property
+    def docked(self) -> bool:
+        return self.edge is not None
+
+    @docked.setter
+    def docked(self, on: bool) -> None:
+        if on != self.docked:
+            self.edge = "top" if on else None
+
     def _set_pos(self, x: float, y: float) -> None:
         self._pos = QPointF(x, y)
         self.move(int(round(x)), int(round(y)))
         self.update()
 
+    @staticmethod
+    def _home_x(sr: QRectF) -> float:
+        return sr.center().x() + (1 if int(sr.width()) % 2 else 0)
+
+    def _anchor(self) -> QPointF:
+        """Where the body is attached inside the window: the middle of its side against the edge (docked), or the
+        middle of its top (floating; of its bottom when it grows upwards)."""
+        w, h, e = self.width(), self.height(), self.edge
+        if e == "bottom":
+            return QPointF(w / 2, h)
+        if e == "left":
+            return QPointF(0.0, h / 2)
+        if e == "right":
+            return QPointF(w, h / 2)
+        if e == "top":
+            return QPointF(w / 2, 0.0)
+        return QPointF(w / 2, h - self.FLOAT_PAD * self.s if self._up else self.FLOAT_PAD * self.s)
+
+    def _edge_pos(self, edge: str, along: float, sr: QRectF) -> QPointF:
+        """The window's top-left for a notch hanging from `edge` of `sr`, its middle at `along` (x for the top and
+        bottom edges, y for the sides) — kept so its middle stays on the screen."""
+        if edge in ("top", "bottom"):
+            x = max(sr.left(), min(sr.right(), along)) - self.width() / 2
+            return QPointF(x, sr.top() if edge == "top" else sr.bottom() - self.height())
+        y = max(sr.top(), min(sr.bottom(), along)) - self.height() / 2
+        return QPointF(sr.left() if edge == "left" else sr.right() - self.width(), y)
+
+    def _along(self) -> float:
+        """Where along its edge a docked notch is (its middle: x on the top and bottom, y on the sides)."""
+        if self.edge in ("left", "right"):
+            return self._pos.y() + self.height() / 2
+        return self._pos.x() + self.width() / 2
+
     def _screen_rect(self, at: QPointF | None = None) -> QRectF:
         """The work area of the screen the notch is on (or the one under `at`)."""
         if at is None:
-            at = QPointF(self._pos.x() + self.width() / 2, self._pos.y() + 2)
+            ax, ay = AWAY.get(self.edge, (0, -1 if self._up else 1))
+            at = self._pos + self._anchor() + QPointF(2 * ax, 2 * ay)
         screen = QGuiApplication.screenAt(at.toPoint()) or self.screen() or QGuiApplication.primaryScreen()
         return QRectF(screen.availableGeometry()) if screen is not None else QRectF(0, 0, 1920, 1080)
 
-    def _clamp_free(self, x: float, y: float, sr: QRectF) -> tuple[float, float]:
-        """A free notch's window position, kept on the screen (its body may hide against an edge, never past it)."""
-        x = max(sr.left() - self.width() / 2, min(sr.right() - self.width() / 2, x))
-        y = max(sr.top() + self.DOCK_SNAP * self.s - self.FLOAT_PAD * self.s + 1,
-                min(sr.bottom() - self.height(), y))
-        return x, y
+    def _free_top(self, y: float | None = None) -> float:
+        """The top of a floating notch's body on the screen (with its window's top at `y`)."""
+        y = self._pos.y() if y is None else y
+        return y + self.height() - self.FLOAT_PAD * self.s - self.h_s.value if self._up else y + self.FLOAT_PAD * self.s
 
-    def _body_top(self) -> float:
-        return self.pull.value if self.docked else self.FLOAT_PAD * self.s
+    def _free_window_y(self, top: float) -> float:
+        return top - (self.height() - self.FLOAT_PAD * self.s - self.h_s.value if self._up else self.FLOAT_PAD * self.s)
+
+    def _clamp_free(self, x: float, y: float, sr: QRectF) -> tuple[float, float]:
+        """A free notch's window position, its body kept on the screen and just clear of the edges (closer, and
+        it would merge into one)."""
+        w, h, gap = self.w_s.value, self.h_s.value, (self.DOCK_SNAP + 1) * self.s
+        cx = x + self.width() / 2
+        cx = max(sr.left() + w / 2 + gap, min(sr.right() - w / 2 - gap, cx))
+        top = max(sr.top() + gap, min(sr.bottom() - h - gap, self._free_top(y)))
+        return cx - self.width() / 2, self._free_window_y(top)
+
+    def _edge_near(self, x: float, y: float, sr: QRectF, reach: float) -> str | None:
+        """The edge of the screen a free notch with its window at (x, y) is within `reach` of (the closest)."""
+        w, h = self.w_s.value, self.h_s.value
+        cx, top = x + self.width() / 2, self._free_top(y)
+        gaps = {"top": top - sr.top(), "bottom": sr.bottom() - (top + h),
+                "left": cx - w / 2 - sr.left(), "right": sr.right() - (cx + w / 2)}
+        edge = min(gaps, key=gaps.get)
+        return edge if gaps[edge] <= reach else None
+
+    def _merge(self, edge: str, x: float, y: float, sr: QRectF) -> QPointF:
+        """A free notch (window at x, y) joins `edge`: where its window goes."""
+        along = (x + self.width() / 2) if edge in ("top", "bottom") else self._free_top(y) + self.h_s.value / 2
+        self.edge = edge
+        return self._edge_pos(edge, along, sr)
+
+    def _tear_off(self, sr: QRectF) -> None:
+        """Pulled far enough from its edge: the body comes away where the stretched drop was, now floating."""
+        body = self.body_rect().translated(self._pos)
+        self.edge = None
+        self._up = body.center().y() > sr.center().y()
+        self.pull.snap(0.0)
+        self._kick(7.0)
+        self._set_pos(*self._clamp_free(body.center().x() - self.width() / 2, self._free_window_y(body.top()), sr))
 
     def _settle_move(self) -> None:
         """It came to rest somewhere: remember it, and look at what's behind it again."""
         self._moving = False
         self._vel = self._glide = None
         sr = self._screen_rect()
-        cx = self._pos.x() + self.width() / 2
-        if self.position is not None or abs(cx - (sr.center().x() + (1 if int(sr.width()) % 2 else 0))) > 2 \
-                or not self.docked:
-            self.position = {"docked": self.docked, "x": round(cx, 1),
-                             "y": round(sr.top() if self.docked else self._pos.y() + self.FLOAT_PAD * self.s, 1)}
+        if self.edge is None:
+            # grow towards the roomier half of the screen: downwards in the top half, upwards in the bottom one
+            top = self._free_top()
+            up = top + self.h_s.value / 2 > sr.center().y()
+            if up != self._up:
+                self._up = up
+                self._set_pos(self._pos.x(), self._free_window_y(top))
+            sr = self._screen_rect()
+        along = self._along()
+        if self.position is not None or self.edge != "top" or abs(along - self._home_x(sr)) > 2:
+            e = self.edge
+            if e is None:
+                cx = self._pos.x() + self.width() / 2
+                y = self._pos.y() + (self.height() - self.FLOAT_PAD * self.s if self._up else self.FLOAT_PAD * self.s)
+                self.position = {"docked": False, "x": round(cx, 1), "y": round(y, 1), "up": self._up}
+            elif e in ("top", "bottom"):
+                self.position = {"docked": True, "edge": e, "x": round(along, 1),
+                                 "y": round(sr.top() if e == "top" else sr.bottom(), 1)}
+            else:
+                self.position = {"docked": True, "edge": e, "x": round(sr.left() if e == "left" else sr.right(), 1),
+                                 "y": round(along, 1)}
         self.moved.emit(self.position)
         self._refresh_backdrop(force=True)
         self._retarget()
@@ -619,6 +722,8 @@ class NotchWindow(QWidget):
         busy = bool(self.activity() or self.status_dot or self._privacy())
         if self.peek and not self.active and not busy and not self.hovered:
             w, h, r = self.PEEK
+            if self.edge in ("left", "right"):
+                w, h = h, w                        # a thin line along the side
             return w * s, h * s, r * s, 0.0
         w, h, r = self.COLLAPSED
         return self._compact_width(), h * s, r * s, 0.0
@@ -638,51 +743,81 @@ class NotchWindow(QWidget):
         w, h = w * sq, h * (1.0 - 0.06 * self.press.value)
         wob = max(-0.35, min(0.35, self.wob.value * 0.1))      # squash and stretch
         stretch = self._stretch()
+        a, e = self._anchor(), self.edge
+        pull = self.pull.value if e is not None else 0.0
+        if e in ("left", "right"):         # a tab out of the side: thinner along the edge as it's pulled
+            w, h = w * (1.0 - wob + 0.08 * stretch), h * (1.0 + wob - 0.12 * stretch)
+            x = a.x() + pull if e == "left" else a.x() - pull - w
+            return QRectF(x, a.y() + self._edge_shift(h) - h / 2, w, h)
         w, h = w * (1.0 + wob - 0.12 * stretch), h * (1.0 - wob + 0.08 * stretch)
-        return QRectF(self.width() / 2 + self._edge_shift(w) - w / 2, self._body_top(), w, h)
+        y = a.y() - pull - h if e == "bottom" or (e is None and self._up) else a.y() + pull
+        return QRectF(a.x() + self._edge_shift(w) - w / 2, y, w, h)
 
     def _stretch(self) -> float:
-        """0…1: how far it's been pulled down from the top edge, towards tearing off."""
+        """0…1: how far it's been pulled away from its edge, towards tearing off."""
         return max(0.0, min(1.0, self.pull.value / (self.TEAR * self.s * 0.55))) if self.docked else 0.0
 
-    def _edge_shift(self, w: float) -> float:
-        """Near a side of the screen the body slides over inside its window so it stays fully on screen."""
+    def _edge_shift(self, length: float) -> float:
+        """Near an end of its edge (or a side of the screen) the body slides over inside its window so it stays
+        fully on screen."""
         if not self.isVisible():
             return 0.0
         sr = self._screen_rect()
-        left = self._pos.x() + self.width() / 2 - w / 2
+        if self.edge in ("left", "right"):
+            lo, hi, start = sr.top(), sr.bottom(), self._pos.y() + self.height() / 2 - length / 2
+        else:
+            lo, hi, start = sr.left(), sr.right(), self._pos.x() + self.width() / 2 - length / 2
         pad = 4.0 * self.s
-        if left < sr.left() + pad:
-            return sr.left() + pad - left
-        if left + w > sr.right() - pad:
-            return sr.right() - pad - (left + w)
+        if start < lo + pad:
+            return lo + pad - start
+        if start + length > hi - pad:
+            return hi - pad - (start + length)
         return 0.0
 
+    def _canon(self, rect: QRectF) -> tuple[QRectF, QTransform]:
+        """The body as if it hung from the top edge (the edge along y = 0, the body below it), and the transform
+        that puts that back on its own edge: the shapes are drawn once for all four edges."""
+        w, h, e = self.width(), self.height(), self.edge
+        if e == "bottom":
+            return QRectF(rect.left(), h - rect.bottom(), rect.width(), rect.height()), QTransform(1, 0, 0, -1, 0, h)
+        if e == "left":
+            return QRectF(rect.top(), rect.left(), rect.height(), rect.width()), QTransform(0, 1, 1, 0, 0, 0)
+        if e == "right":
+            return QRectF(rect.top(), w - rect.right(), rect.height(), rect.width()), QTransform(0, 1, -1, 0, w, 0)
+        return QRectF(rect), QTransform()
+
+    def _hanging(self, rect: QRectF) -> bool:
+        """Docked and right against its edge (not pulled away from it)."""
+        return self.docked and self._canon(rect)[0].top() <= 0.5
+
     def _body_path(self, rect: QRectF, r: float) -> QPainterPath:
-        """Docked: shoulders curving into the top edge of the screen, rounded at the bottom (pulled down, a
+        """Docked: shoulders curving into its edge of the screen, rounded at the far end (pulled away, a
         narrowing neck of liquid joins it to the edge). Floating: a rounded island."""
-        r = max(1.0, min(r, rect.height(), rect.width() / 2))
-        if not self.docked or rect.top() > 0.5:
+        c, t = self._canon(rect)
+        if not self.docked or c.top() > 0.5:
+            rr = max(1.0, min(r, rect.height() / 2, rect.width() / 2))
             path = QPainterPath()
-            path.addRoundedRect(rect, min(r, rect.height() / 2), min(r, rect.height() / 2))
+            path.addRoundedRect(rect, rr, rr)
             if self.docked:
-                path = path.united(self._neck(rect))
+                path = path.united(t.map(self._neck(c)))
             return path
+        r = max(1.0, min(r, c.height(), c.width() / 2))
         path = QPainterPath()
-        path.addRoundedRect(QRectF(rect.left(), -r - 2, rect.width(), rect.height() + r + 2), r, r)
-        sh = min(self.SHOULDER * self.s, rect.height() * 0.7)
+        path.addRoundedRect(QRectF(c.left(), -r - 2, c.width(), c.height() + r + 2), r, r)
+        sh = min(self.SHOULDER * self.s, c.height() * 0.7)
         if sh > 1.0:
-            for x, sgn in ((rect.left(), -1.0), (rect.right(), 1.0)):
+            for x, sgn in ((c.left(), -1.0), (c.right(), 1.0)):
                 f = QPainterPath()
                 f.moveTo(x + sgn * sh, 0)
                 f.quadTo(x, 0, x, sh)
                 f.lineTo(x, 0)
                 f.closeSubpath()
                 path = path.united(f)
-        return path
+        return t.map(path)
 
     def _neck(self, rect: QRectF) -> QPainterPath:
-        """The liquid neck between the top edge and a notch being pulled down: thinner the further it goes."""
+        """The liquid neck between the edge and a notch being pulled away from it: thinner the further it goes.
+        `rect` is the body as _canon gives it (hanging from the top)."""
         t = self._stretch()
         cx, top, mid = rect.center().x(), rect.top(), rect.top() + rect.height() * 0.5
         a = rect.width() / 2 * (0.85 - 0.25 * t) + self.SHOULDER * self.s * (1 - t)   # where it meets the edge
@@ -730,26 +865,34 @@ class NotchWindow(QWidget):
             self._timer.stop()
 
     def _fly(self, dt: float) -> None:
-        """Thrown: glide with friction, bounce off the sides and bottom, merge into the top edge."""
+        """Thrown: glide with friction; docked, slide along the edge and bounce off its ends; free, merge into
+        whichever edge of the screen it flies into."""
         sr = self._screen_rect()
         v = self._vel
         x, y = self._pos.x() + v.x() * dt, self._pos.y() + v.y() * dt
         v = v * math.exp(-3.0 * dt)
-        half = self.width() / 2
-        if x + half < sr.left() or x + half > sr.right():
-            x = max(sr.left() - half, min(sr.right() - half, x))
-            self._kick(min(8.0, abs(v.x()) / 250))
-            v = QPointF(-v.x() * 0.45, v.y())
-        if self.docked:
-            y, v = sr.top(), QPointF(v.x(), 0.0)
-        elif y + self.FLOAT_PAD * self.s <= sr.top() + 2 and v.y() < 0:
-            self.docked = True                       # flew into the top edge: merge with it
-            self._kick(min(9.0, abs(v.y()) / 220))
-            y, v = sr.top(), QPointF(v.x(), 0.0)
-        elif y > sr.bottom() - self.height():
-            y = sr.bottom() - self.height()
-            self._kick(-min(8.0, abs(v.y()) / 250))
-            v = QPointF(v.x(), -v.y() * 0.45)
+        e = self.edge
+        if e is not None:
+            side = e in ("left", "right")
+            along = y + self.height() / 2 if side else x + self.width() / 2
+            lo, hi = (sr.top(), sr.bottom()) if side else (sr.left(), sr.right())
+            speed = v.y() if side else v.x()
+            if along < lo or along > hi:
+                self._kick(min(8.0, abs(speed) / 250))
+                speed = -speed * 0.45
+            v = QPointF(0.0, speed) if side else QPointF(speed, 0.0)
+            pos = self._edge_pos(e, along, sr)
+            x, y = pos.x(), pos.y()
+        else:
+            hit = self._edge_near(x, y, sr, (self.DOCK_SNAP + 1.5) * self.s)
+            if hit is not None and v.x() * AWAY[hit][0] + v.y() * AWAY[hit][1] < 0:
+                into = abs(v.x() * AWAY[hit][0] + v.y() * AWAY[hit][1])
+                pos = self._merge(hit, x, y, sr)             # flew into an edge: merge with it
+                self._kick(min(9.0, into / 220))
+                x, y = pos.x(), pos.y()
+                v = QPointF(v.x(), 0.0) if hit in ("top", "bottom") else QPointF(0.0, v.y())
+            else:
+                x, y = self._clamp_free(x, y, sr)
         self._vel = v
         self._set_pos(x, y)
         if math.hypot(v.x(), v.y()) < 35:
@@ -839,16 +982,26 @@ class NotchWindow(QWidget):
             return None                  # what's behind it changes as it moves: tint only until it settles
         q = 4.0
         w, h = round(rect.width() / q) * q, round(rect.height() / q) * q
-        cx, top = round(rect.center().x()), round(rect.top())
-        key = (w, h, round(r), self._bd_ver, self.width(), cx, top, self.docked)
+        cx, cy = round(rect.center().x()), round(rect.center().y())
+        hanging = self._hanging(rect)
+        key = (w, h, round(r), self._bd_ver, self.width(), cx, cy, self.edge, hanging)
         if key != self._glass_key:
-            if self.docked and top <= 0:
-                shape = liquid.RoundRect(cx - w / 2, -r - 2, cx + w / 2, h, max(2.0, r),
-                                         bevel=min(14 * self.s, h * 0.5), bend=0.85, magnify=1.02)
+            x0, y0, x1, y1 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+            if hanging:                  # runs on past its edge, so only the far end is rounded
+                ext = r + 2
+                if self.edge == "top":
+                    y0 = -ext
+                elif self.edge == "bottom":
+                    y1 = self.height() + ext
+                elif self.edge == "left":
+                    x0 = -ext
+                else:
+                    x1 = self.width() + ext
+                rr = max(2.0, r)
             else:
-                rr = max(2.0, min(r, h / 2))
-                shape = liquid.RoundRect(cx - w / 2, top, cx + w / 2, top + h, rr,
-                                         bevel=min(14 * self.s, h * 0.5), bend=0.85, magnify=1.02)
+                rr = max(2.0, min(r, h / 2, w / 2))
+            shape = liquid.RoundRect(x0, y0, x1, y1, rr, bevel=min(14 * self.s, min(w, h) * 0.5), bend=0.85,
+                                     magnify=1.02)
             self._glass_brush = liquid.brush(liquid.render(bd, [shape]), bd.f)
             self._glass_key = key
         return self._glass_brush
@@ -892,20 +1045,23 @@ class NotchWindow(QWidget):
         body = self._body_path(rect, r)
         hc = self.high_contrast
         glassy = self.opts["look"] == "glass" and not hc
-        big = min(1.0, max(0.0, (rect.height() - self.COLLAPSED[1] * self.s) / (6 * self.s)))   # grown
+        thick = min(rect.width(), rect.height())
+        big = min(1.0, max(0.0, (thick - self.COLLAPSED[1] * self.s) / (6 * self.s)))   # grown
+        cr, t = self._canon(rect)             # drawn as if it hung from the top, then put on its own edge
 
         # shadow (kept tight: every visible pixel catches the mouse)
-        hanging = self.docked and rect.top() <= 0.5
+        hanging = self._hanging(rect)
         for i, a in ((5, 0.05), (3, 0.07), (1.5, 0.09)):
             sp = QPainterPath()
             if hanging:
-                sp.addRoundedRect(QRectF(rect.left() - i, -r, rect.width() + 2 * i, rect.height() + r + i + 1.5),
+                sp.addRoundedRect(QRectF(cr.left() - i, -r, cr.width() + 2 * i, cr.height() + r + i + 1.5),
                                   r + i, r + i)
+                sp = t.map(sp)
             else:
-                rr = min(r, rect.height() / 2) + i
+                rr = min(r, thick / 2) + i
                 sp.addRoundedRect(rect.adjusted(-i, -i + 1.5, i, i + 1.5), rr, rr)
                 if self.docked:
-                    sp = sp.united(self._neck(rect))
+                    sp = sp.united(t.map(self._neck(cr)))
             p.fillPath(sp, black(a * (0.6 if glassy else 1.0)))
 
         # body: the refracted backdrop under a tint — "Dark" is nearly black at rest like a real notch,
@@ -921,7 +1077,7 @@ class NotchWindow(QWidget):
         else:
             rest_a, grown_a = 0.80, liquid.tint_alpha(lum, 0.52, 0.70)
         p.fillPath(body, qcolor("#09090d", rest_a + (grown_a - rest_a) * big))
-        sheen = QLinearGradient(0, 0, 0, rect.bottom())
+        sheen = QLinearGradient(t.map(QPointF(0, 0)), t.map(QPointF(0, cr.bottom())))   # brighter away from the edge
         sheen.setColorAt(0.0, white(0.0))
         sheen.setColorAt(0.7, white(0.05 if glassy else 0.03))
         sheen.setColorAt(1.0, white(0.14 if glassy else 0.09))
@@ -931,11 +1087,11 @@ class NotchWindow(QWidget):
             p.fillPath(body, qcolor(BLUE, 0.18 * lit))
         p.save()
         if self.docked:
-            p.setClipRect(QRectF(0, 1.0, self.width(), self.height()))
+            p.setClipRect(t.mapRect(QRectF(-1e5, 1.0, 2e5, 2e5)))      # no rim along the edge itself
         if hc:
             p.strokePath(body, QPen(white(0.9), 1.6))
         else:
-            stroke_rim(p, body, QPointF(rect.center().x(), rect.top()), 1.2, 1.0 if glassy else 0.8, light_deg=235)
+            stroke_rim(p, body, t.map(QPointF(cr.center().x(), cr.top())), 1.2, 1.0 if glassy else 0.8, light_deg=235)
         p.restore()
 
         p.save()
@@ -1460,37 +1616,37 @@ class NotchWindow(QWidget):
         self._drag_to(g)
 
     def _drag_to(self, g: QPointF) -> None:
-        """Follow the mouse: along the top edge while docked (pulling down stretches it, then it tears off);
-        anywhere once free (back near the top edge, it merges in again)."""
+        """Follow the mouse: along its edge while docked (pulling away stretches it, then it tears off); anywhere
+        once free (brought near any edge of the screen, it merges into that one)."""
         drag = self._drag
         s = self.s
         d = g - drag["start"]
         sr = self._screen_rect(g)
-        if self.docked:
-            x = max(sr.left() - self.width() / 2, min(sr.right() - self.width() / 2, drag["pos"].x() + d.x()))
-            dy = g.y() - drag["anchor_y"]
-            if dy < self.TEAR * s:
-                self.pull.snap(max(0.0, dy) * 0.55)
-                self._set_pos(x, sr.top())
+        e = self.edge
+        if e is not None:
+            side = e in ("left", "right")
+            along = drag["pos"].y() + d.y() + self.height() / 2 if side else drag["pos"].x() + d.x() + self.width() / 2
+            ax, ay = AWAY[e]
+            away = (g.x() - drag["anchor"].x()) * ax + (g.y() - drag["anchor"].y()) * ay
+            pos = self._edge_pos(e, along, sr)
+            if away < self.TEAR * s:
+                self.pull.snap(max(0.0, away) * 0.55)
+                self._set_pos(pos.x(), pos.y())
                 self._wake()
                 return
-            # tear off: the body stays where the stretched drop was, now free
-            body_top = sr.top() + self.pull.value
-            self.docked = False
-            self.pull.snap(0.0)
-            self._kick(7.0)
-            x, y = self._clamp_free(x, body_top - self.FLOAT_PAD * s, sr)
-            drag["pos"] = QPointF(x - d.x(), y - d.y())
-            self._set_pos(x, y)
+            self._set_pos(pos.x(), pos.y())
+            self._tear_off(sr)
+            drag["pos"] = self._pos - d
             self._retarget()
             return
         x, y = drag["pos"].x() + d.x(), drag["pos"].y() + d.y()
-        if y + self.FLOAT_PAD * s <= sr.top() + self.DOCK_SNAP * s:
-            self.docked = True                       # touched the top edge: merge back in
+        edge = self._edge_near(x, y, sr, self.DOCK_SNAP * s)
+        if edge is not None:
+            pos = self._merge(edge, x, y, sr)        # touched an edge: merge into it
             self._kick(-6.0)
-            drag["anchor_y"] = g.y()
-            drag["pos"] = QPointF(x - d.x(), sr.top())
-            self._set_pos(x, sr.top())
+            drag["anchor"] = QPointF(g)
+            drag["pos"] = pos - d
+            self._set_pos(pos.x(), pos.y())
             self._retarget()
             return
         x, y = self._clamp_free(x, y, sr)
@@ -1534,7 +1690,7 @@ class NotchWindow(QWidget):
         # a click or the start of a drag: which one is decided when it moves or lets go
         g = ev.globalPosition()
         self._vel = self._glide = None
-        self._drag = {"start": g, "pos": QPointF(self._pos), "anchor_y": g.y(), "moved": False,
+        self._drag = {"start": g, "pos": QPointF(self._pos), "anchor": QPointF(g), "moved": False,
                       "samples": [(time.monotonic(), g)]}
         self.press.snap(1.0)
         self.press.target = 0.0
@@ -1555,18 +1711,14 @@ class NotchWindow(QWidget):
         dt = t1 - t0
         fresh = dt > 0.012 and time.monotonic() - t1 < 0.08      # still moving when it let go
         v = QPointF((p1.x() - p0.x()) / dt, (p1.y() - p0.y()) / dt) if fresh else QPointF()
-        if self.docked:
-            if v.y() > 900 and self.pull.value > 8 * self.s:
-                # flicked down off the edge: tear off and fly
-                sr = self._screen_rect()
-                self.docked = False
-                self._kick(7.0)
-                self._set_pos(*self._clamp_free(self._pos.x(), sr.top() + self.pull.value - self.FLOAT_PAD * self.s,
-                                                sr))
-                self.pull.snap(0.0)
+        e = self.edge
+        if e is not None:
+            ax, ay = AWAY[e]
+            if v.x() * ax + v.y() * ay > 900 and self.pull.value > 8 * self.s:
+                self._tear_off(self._screen_rect())     # flicked off the edge: tear off and fly
             else:
-                self.pull.target = 0.0               # snaps back up into the edge
-                v = QPointF(v.x(), 0.0)
+                self.pull.target = 0.0               # snaps back into the edge
+                v = QPointF(v.x(), 0.0) if e in ("top", "bottom") else QPointF(0.0, v.y())
         if math.hypot(v.x(), v.y()) > 250 and not self.reduce_motion:
             limit = 4500.0
             self._vel = QPointF(max(-limit, min(limit, v.x())), max(-limit, min(limit, v.y())))
