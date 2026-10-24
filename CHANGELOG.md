@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.1.0]
 
 ### Fixed
 - **Slides, video and volume rings, and the mouse on the rotary.** Opening the rotary failed half-way
