@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import LINUX, MAC
+from . import LINUX, MAC, keys
 
 log = logging.getLogger(__name__)
 
@@ -461,19 +461,22 @@ def press_keys(names: list[str]) -> None:
 # --------------------------------------------------------------------------- global hotkeys
 # The callers speak Windows' RegisterHotKey language (MOD_* flags and virtual-key codes); these translate.
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN = 0x1, 0x2, 0x4, 0x8
-_VK_NAMES = {0x20: "space", 0x25: "left", 0x26: "up", 0x27: "right", 0x28: "down", 0x0D: "enter", 0x1B: "esc",
-             0xBB: "equal", 0xBD: "minus", 0x6B: "kp_add", 0x6D: "kp_subtract"}
+_VK_NAMES = {vk: name for name, vk in keys.KEYS.items()}     # 0x20 → "space", 0x41 → "a", 0x70 → "f1", …
 _MAC_SPECIAL = {"space": 49, "left": 123, "right": 124, "down": 125, "up": 126, "enter": 36, "esc": 53,
-                "equal": 24, "minus": 27, "kp_add": 69, "kp_subtract": 78}
+                "equal": 24, "minus": 27, "kp_add": 69, "kp_subtract": 78, "tab": 48, "backspace": 51,
+                "home": 115, "end": 119, "pageup": 116, "pagedown": 121, "insert": 114, "delete": 117,
+                "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100, "f9": 101,
+                "f10": 109, "f11": 103, "f12": 111}
 _X_SPECIAL = {"space": "space", "left": "Left", "right": "Right", "down": "Down", "up": "Up", "enter": "Return",
-              "esc": "Escape", "equal": "equal", "minus": "minus", "kp_add": "KP_Add", "kp_subtract": "KP_Subtract"}
+              "esc": "Escape", "equal": "equal", "minus": "minus", "kp_add": "KP_Add", "kp_subtract": "KP_Subtract",
+              "tab": "Tab", "backspace": "BackSpace", "home": "Home", "end": "End", "pageup": "Prior",
+              "pagedown": "Next", "insert": "Insert", "delete": "Delete",
+              **{f"f{n}": f"F{n}" for n in range(1, 13)}}
 
 
 def _vk_name(vk: int) -> str:
     if vk in _VK_NAMES:
         return _VK_NAMES[vk]
-    if 0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A:
-        return chr(vk).lower()
     raise ValueError(f"no hotkey for key code {vk:#x}")
 
 

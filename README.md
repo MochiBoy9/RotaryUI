@@ -79,7 +79,7 @@ opens. *Skip tour* (or Esc) closes it. Replay it any time with *Take the tour* o
 | Back of the hand, or lower it | Closes |
 | **Index + middle finger up**, slide up or down | Changes the volume, whether the rotary is open or not: a full-size volume ring appears in a corner of the screen (*Controls → Volume ring corner*) and turns with the level |
 | **Pinch with both hands**, then pull apart or push together | Resizes the window in front (if it's windowed): side by side changes the width, one above the other the height, opposite corners both. Let go of the pinch to stop |
-| **Ctrl + Alt + Space** (Mac: **⌃⌥Space**) | Opens from the keyboard: ← → move, Enter launches, Esc closes |
+| **Ctrl + Alt + Space** (Mac: **⌃⌥Space**) | Opens from the keyboard: ← → move, Enter launches, Esc closes. Any shortcut, and the keys that move, launch and go back, can be changed in *Accessibility → Keyboard & mouse* |
 | **Hold the middle mouse button** | Opens for the mouse, even over a full-screen game (or a side button: *Accessibility*) |
 
 Whenever the rotary is on screen — however you opened it — the mouse works on it directly: **scroll over the ring** to turn it, **drag it around** like a knob, and **click an item or the centre** to launch it. These never reach the app underneath, so it works the same over a browser, a game or the desktop. (On Linux the mouse can turn the ring but the app underneath may see the clicks too.)
@@ -163,6 +163,12 @@ leaves full screen. The mouse button works over full-screen apps, where the notc
 pressing it and dragging) still reaches the app as usual; *Accessibility → Keyboard & mouse* can use the back or
 forward side button instead, or none. On a Mac this needs the Accessibility permission; on Linux the clicks and
 scrolls also reach the app underneath.
+
+Mouse users can also pick a button that **opens the highlighted item** and one that **closes the rotary** from
+anywhere on the screen (*Accessibility → Keyboard & mouse*): left click to open and right click to close, say, so
+you scroll to an item and click without aiming at it. Over the ring, a left click still opens the item under the
+pointer. The shortcut that opens the rotary (and Screen assist's) can be any combination you press: click it in
+Settings and press the keys. *Keys on the open rotary* changes ← → Enter Esc to keys of your own.
 
 A rotary opened by a gesture lets every click through to the windows underneath, as before.
 

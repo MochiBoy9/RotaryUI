@@ -485,11 +485,9 @@ def test_notch_menu_offers_screen_assist():
 
 
 def test_shortcuts_avoid_altgr_on_windows_and_exist_on_every_system():
-    from rotary import MAC, posix
-    from rotary.app import ASSIST_HOTKEYS
-    from rotary.ui.settings import ASSIST_HOTKEYS as CHOICES
+    from rotary import MAC, keys, posix
     assert DEFAULT_CONFIG["assist"]["hotkey"] == ("ctrl+alt+a" if MAC else "win+alt+a")
     assert assist.settings({})["hotkey"] == DEFAULT_CONFIG["assist"]["hotkey"]
-    assert {k for k, _label in CHOICES} == set(ASSIST_HOTKEYS) | {"off"}
-    for _mods, vk in ASSIST_HOTKEYS.values():
+    for combo in ("win+alt+a", "ctrl+alt+a", "ctrl+shift+a"):     # the ones the list used to offer still work
+        _mods, vk = keys.parse(combo)
         assert posix._vk_name(vk) == "a"               # the Carbon and X11 grabs know the key

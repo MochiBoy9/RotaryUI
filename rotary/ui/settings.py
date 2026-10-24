@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QCheckBox, QC
                                QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
                                QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
-from .. import DATA_DIR, DEVICE, MAC, OS_NAME, ROOT, WIN, __version__, apps, integrations, obs, system, update, winapi
+from .. import (DATA_DIR, DEVICE, MAC, OS_NAME, ROOT, WIN, __version__, apps, integrations, keys, obs, system, update,
+               winapi)
 from .. import assist as ai
 from ..actions import open_target
 from ..actions import ACTION_TYPES, ASSIST_ITEM, CONFIG_PATH, MEDIA_PRESETS, Item, build_items
@@ -33,8 +34,8 @@ from .dial import DialPainter
 from .notch import DEFAULT_OPTIONS as DEFAULT_ISLAND
 from .notch import system_24h
 from .glass import BUNDLED_TEXT, ICONS, SYSTEM_TEXT, TEXT, app_icon, blur_backdrop, font, font_choices, white
-from .widgets import (Card, ColorPicker, GlyphPicker, PresetTile, Row, Segmented, SliderControl, Switch,
-                      icon_button, scroll_page, stylesheet)
+from .widgets import (Card, ColorPicker, GlyphPicker, KeyRecorder, PresetTile, Row, Segmented, SliderControl,
+                      Switch, icon_button, scroll_page, stylesheet)
 
 log = logging.getLogger(__name__)
 _uid = itertools.count(1)
@@ -63,22 +64,12 @@ PRESETS = [
       "scroll_speed": 0.6, "dwell_seconds": 2.2, "pinch_click": False, "finger_swipe": False,
       "finger_push": False, "large_move": 0.75, "idle_timeout": 30.0}),
 ]
-HOTKEYS = [("ctrl+alt+space", "Ctrl + Alt + Space"), ("ctrl+shift+space", "Ctrl + Shift + Space"),
-           ("ctrl+alt+r", "Ctrl + Alt + R"), ("win+alt+space", "Win + Alt + Space"), ("off", "Off")]
-if MAC:
-    HOTKEYS = [("ctrl+alt+space", "⌃⌥Space  (Control + Option + Space)"),
-               ("ctrl+shift+space", "⌃⇧Space  (Control + Shift + Space)"), ("ctrl+alt+r", "⌃⌥R  (Control + Option + R)"),
-               ("win+alt+space", "⌥⌘Space  (Option + Command + Space)"), ("off", "Off")]
-elif not WIN:
-    HOTKEYS[3] = ("win+alt+space", "Super + Alt + Space")
 MOUSE_BUTTONS = [("middle", "Hold the middle button (wheel)"), ("back", "Back side button"),
                  ("forward", "Forward side button"), ("off", "Off")]
-# Screen assist. Ctrl + Alt + a letter is AltGr on many Windows keyboards (Polish ą…), so it isn't the default there.
-ASSIST_HOTKEYS = [("win+alt+a", "Win + Alt + A" if WIN else "Super + Alt + A"), ("ctrl+alt+a", "Ctrl + Alt + A"),
-                  ("ctrl+shift+a", "Ctrl + Shift + A"), ("off", "Off")]
-if MAC:
-    ASSIST_HOTKEYS = [("ctrl+alt+a", "⌃⌥A  (Control + Option + A)"), ("win+alt+a", "⌥⌘A  (Option + Command + A)"),
-                      ("ctrl+shift+a", "⌃⇧A  (Control + Shift + A)"), ("off", "Off")]
+MOUSE_SELECT = [("off", "Off (click on an item)"), ("left", "Left click anywhere"), ("middle", "Middle click"),
+                ("back", "Back side button"), ("forward", "Forward side button")]
+MOUSE_CLOSE = [("off", "Off (right click goes back)"), ("right", "Right click anywhere"), ("middle", "Middle click"),
+               ("back", "Back side button"), ("forward", "Forward side button")]
 if WIN:
     KEY_PRESETS = [("win+d", "Show desktop"), ("win+tab", "Task view"), ("win+shift+s", "Snip screen"),
                    ("ctrl+shift+esc", "Task Manager"), ("alt+tab", "Switch window"), ("win+e", "File Explorer"),
@@ -1795,21 +1786,48 @@ class AccessibilityPage(QWidget):
         v.addWidget(c)
 
         c = Card("Keyboard & mouse", "Open the rotary without gestures. While it's open from the keyboard, the "
-                                     "mouse or the notch: ← and → move, Enter launches, Esc goes back or closes — and "
-                                     "the mouse works too: scroll anywhere or drag the ring, click to choose and open. "
+                                     "mouse or the notch, the keys below move, launch and go back — and the mouse "
+                                     "works too: scroll anywhere or drag the ring, click to choose and open. "
                                      "Clicks and scrolls outside the rotary stop there, so a full-screen game or "
                                      "video underneath is never clicked into or knocked out of full screen.")
-        self.hotkey = QComboBox()
-        for k, label in HOTKEYS:
-            self.hotkey.addItem(label, k)
-        self.hotkey.setCurrentIndex(max(0, self.hotkey.findData(gen.get("hotkey", "ctrl+alt+space"))))
-        c.add(Row("Shortcut to open the rotary", None, self.hotkey))
+        self.hotkey = KeyRecorder(gen.get("hotkey", "ctrl+alt+space"))
+        self.hotkey.recording.connect(self.app.pause_hotkeys)
+        c.add(Row("Shortcut to open the rotary", "Click, then press the keys you want. Backspace turns it off",
+                  self.hotkey))
         self.mouse_btn = QComboBox()
         for k, label in MOUSE_BUTTONS:
             self.mouse_btn.addItem(label, k)
         self.mouse_btn.setCurrentIndex(max(0, self.mouse_btn.findData(gen.get("mouse_button", "middle"))))
         c.add(Row("Mouse button to open the rotary", "Works over full-screen apps too. A quick middle click "
                                                      "still works as usual", self.mouse_btn))
+        self.mouse_select = QComboBox()
+        for k, label in MOUSE_SELECT:
+            self.mouse_select.addItem(label, k)
+        self.mouse_select.setCurrentIndex(max(0, self.mouse_select.findData(gen.get("mouse_select", "off"))))
+        c.add(Row("Mouse button to open the highlighted item", "While the rotary is open: scroll to an item, then "
+                                                               "click anywhere — no need to aim at it",
+                  self.mouse_select))
+        self.mouse_close = QComboBox()
+        for k, label in MOUSE_CLOSE:
+            self.mouse_close.addItem(label, k)
+        self.mouse_close.setCurrentIndex(max(0, self.mouse_close.findData(gen.get("mouse_close", "off"))))
+        c.add(Row("Mouse button to close the rotary", "While it's open, from anywhere on the screen",
+                  self.mouse_close))
+        v.addWidget(c)
+
+        c = Card("Keys on the open rotary", "Only while the rotary is open from the keyboard, the mouse or the "
+                                            "notch, so a plain key is fine. ↑ and ↓ move too, and + and − turn it "
+                                            "into the volume ring, unless you give one of them a job here.")
+        self.rotary_keys: dict[str, KeyRecorder] = {}
+        bound = keys.rotary_keys(gen)
+        for action, title in keys.ROTARY_KEY_NAMES.items():
+            rec = KeyRecorder(bound[action] or "off", shortcut=False)
+            rec.changed.connect(lambda combo, a=action: self._rotary_key(a, combo))
+            self.rotary_keys[action] = rec
+            c.add(Row(title, f"Normally {keys.label(keys.ROTARY_KEYS[action])}", rec))
+        reset = QPushButton("Use the usual keys")
+        reset.clicked.connect(self._reset_rotary_keys)
+        c.add(Row("", None, reset))
         v.addWidget(c)
         v.addStretch(1)
 
@@ -1827,12 +1845,31 @@ class AccessibilityPage(QWidget):
         self.speak.toggled.connect(lambda on: self._ap("speak", on))
         self.sounds.toggled.connect(lambda on: self._ap("sounds", on))
         self.volume.changed.connect(lambda x: self._ap("volume", x))
-        self.hotkey.currentIndexChanged.connect(self._hotkey)
-        self.mouse_btn.currentIndexChanged.connect(self._mouse_btn)
+        self.hotkey.changed.connect(self._hotkey)
+        self.mouse_btn.currentIndexChanged.connect(lambda _i: self._gen("mouse_button", self.mouse_btn.currentData()))
+        self.mouse_select.currentIndexChanged.connect(
+            lambda _i: self._gen("mouse_select", self.mouse_select.currentData()))
+        self.mouse_close.currentIndexChanged.connect(
+            lambda _i: self._gen("mouse_close", self.mouse_close.currentData()))
 
-    def _mouse_btn(self, _i: int) -> None:
-        self.app.cfg.setdefault("general", {})["mouse_button"] = self.mouse_btn.currentData()
+    def _gen(self, key: str, value) -> None:
+        self.app.cfg.setdefault("general", {})[key] = value
         self.app.apply_config()
+
+    def _rotary_key(self, action: str, combo: str) -> None:
+        bound = self.app.cfg.setdefault("general", {}).setdefault("rotary_keys", {})
+        for other, rec in self.rotary_keys.items():       # one key, one job: take it off the one that had it
+            if other != action and combo != "off" and keys.rotary_keys(self.app.cfg["general"])[other] == combo:
+                bound[other] = "off"
+                rec.set_combo("off")
+        bound[action] = combo
+        self.app.apply_config()
+
+    def _reset_rotary_keys(self) -> None:
+        self.app.cfg.setdefault("general", {}).pop("rotary_keys", None)
+        self.app.apply_config()
+        for action, rec in self.rotary_keys.items():
+            rec.set_combo(keys.ROTARY_KEYS[action])
 
     @staticmethod
     def _dist_key(v: float) -> str:
@@ -1854,9 +1891,8 @@ class AccessibilityPage(QWidget):
             self.win.apply_text_scale(float(value))
         self.win.rotary.preview.configure(self.app.cfg)
 
-    def _hotkey(self, _i: int) -> None:
-        self.app.cfg.setdefault("general", {})["hotkey"] = self.hotkey.currentData()
-        self.app.apply_config()
+    def _hotkey(self, combo: str) -> None:
+        self._gen("hotkey", combo)
 
     def refresh(self) -> None:
         g = GestureSettings.from_dict(self.app.cfg.get("gestures"))
@@ -2099,12 +2135,10 @@ class AssistPage(QWidget):
         v.addWidget(c)
 
         c = Card("Using it")
-        self.hotkey = QComboBox()
-        for k, label in ASSIST_HOTKEYS:
-            self.hotkey.addItem(label, k)
-        self.hotkey.setCurrentIndex(max(0, self.hotkey.findData(a["hotkey"])))
-        self.hotkey.currentIndexChanged.connect(lambda _i: self._set("hotkey", self.hotkey.currentData()))
-        c.add(Row("Keyboard shortcut", "Works from any app", self.hotkey))
+        self.hotkey = KeyRecorder(a["hotkey"])
+        self.hotkey.recording.connect(self.app.pause_hotkeys)
+        self.hotkey.changed.connect(lambda combo: self._set("hotkey", combo))
+        c.add(Row("Keyboard shortcut", "Works from any app. Click, then press the keys you want", self.hotkey))
         self.seconds = Segmented([("10", "10 s"), ("20", "20 s"), ("45", "45 s"), ("90", "90 s")],
                                  str(int(a.get("seconds", 20))))
         self.seconds.setFixedWidth(300)
@@ -2226,8 +2260,8 @@ class AssistPage(QWidget):
         cfg = self.app.cfg
         a = ai.settings(cfg)
         prov = ai.provider(cfg)
-        label = dict((k, t.split("  ")[0]) for k, t in ASSIST_HOTKEYS).get(a["hotkey"], "")
-        how = f"Press {label}, choose" if label and a["hotkey"] != "off" else "Choose"
+        label = keys.label(a["hotkey"])
+        how = f"Press {label}, choose" if label else "Choose"
         self.intro.setText(
             f"{how} Screen assist on the rotary, or right-click the notch, and an AI looks at your screen, finds the "
             "question or problem on it and answers on the notch; with no question it goes by context clues or sums "
@@ -2268,9 +2302,7 @@ class AssistPage(QWidget):
             self._load_models()
         self.add_btn.setEnabled(not self._has_item())
         self.add_btn.setText("On the rotary" if self._has_item() else "Add to the rotary")
-        self.hotkey.blockSignals(True)
-        self.hotkey.setCurrentIndex(max(0, self.hotkey.findData(a["hotkey"])))
-        self.hotkey.blockSignals(False)
+        self.hotkey.set_combo(a["hotkey"])
         self.seconds.set_value(str(int(a.get("seconds", 20))))
 
 
@@ -2903,9 +2935,9 @@ class HomePage(QWidget):
         ways = []
         if gen.get("camera", True):
             ways.append("close your hand or hold your palm still")
-        hk = dict(HOTKEYS).get(gen.get("hotkey", "ctrl+alt+space"), "Off")
-        if hk != "Off":
-            ways.append("press " + hk.split("  (")[0])
+        hk = keys.label(gen.get("hotkey", "ctrl+alt+space"))
+        if hk:
+            ways.append("press " + hk)
         mb = gen.get("mouse_button", "middle")
         if mb != "off":
             ways.append({"middle": "hold the middle mouse button", "back": "press the mouse's back button",

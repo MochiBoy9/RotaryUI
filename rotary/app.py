@@ -21,8 +21,8 @@ from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QConicalGradie
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-from . import (DATA_DIR, LINUX, MAC, T0, WIN, __version__, assist, integrations, modes, system, tutorial, update,
-               winapi)
+from . import (DATA_DIR, LINUX, T0, WIN, __version__, assist, integrations, keys, modes, system, tutorial,
+               update, winapi)
 from .actions import (CONFIG_PATH, Item, back_item, build_items, cleanup_scripts, execute, item_from, load_config,
                       save_config)
 from .feedback import Sounds, Speaker
@@ -65,31 +65,17 @@ def fullscreen_app_running() -> bool:
 
 
 # --------------------------------------------------------------------------- global hotkeys
-MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x8, 0x4000
-HOTKEYS = {"ctrl+alt+space": (MOD_CONTROL | MOD_ALT, 0x20), "ctrl+shift+space": (MOD_CONTROL | MOD_SHIFT, 0x20),
-           "ctrl+alt+r": (MOD_CONTROL | MOD_ALT, 0x52), "win+alt+space": (MOD_WIN | MOD_ALT, 0x20)}
+MOD_NOREPEAT = 0x4000
 VIDEO_TICKS = 120                  # a video ring is this many steps long: one full turn, start to end
 SLIDES_TINT, VIDEO_TINT, VOLUME_TINT = "#FF9F0A", "#FF375F", "#0A84FF"
 VOLUME_TICKS = 25                  # a volume ring: a full turn from silent to full, 4 % a click
-HOTKEY_LABELS = {"ctrl+alt+space": "Ctrl + Alt + Space", "ctrl+shift+space": "Ctrl + Shift + Space",
-                 "ctrl+alt+r": "Ctrl + Alt + R", "win+alt+space": "Win + Alt + Space"}
-if MAC:
-    HOTKEY_LABELS = {"ctrl+alt+space": "⌃⌥Space", "ctrl+shift+space": "⌃⇧Space", "ctrl+alt+r": "⌃⌥R",
-                     "win+alt+space": "⌥⌘Space"}
-elif not WIN:
-    HOTKEY_LABELS["win+alt+space"] = "Super + Alt + Space"
 HK_TOGGLE = 1
 HK_ASSIST = 2
-ASSIST_HOTKEYS = {"win+alt+a": (MOD_WIN | MOD_ALT, 0x41), "ctrl+alt+a": (MOD_CONTROL | MOD_ALT, 0x41),
-                  "ctrl+shift+a": (MOD_CONTROL | MOD_SHIFT, 0x41)}
-ASSIST_LABELS = {"win+alt+a": "Win + Alt + A" if WIN else "Super + Alt + A", "ctrl+alt+a": "Ctrl + Alt + A",
-                 "ctrl+shift+a": "Ctrl + Shift + A"}
-if MAC:
-    ASSIST_LABELS = {"ctrl+alt+a": "⌃⌥A", "win+alt+a": "⌥⌘A", "ctrl+shift+a": "⌃⇧A"}
-NAV = {11: (0x25, -1), 12: (0x27, 1), 13: (0x26, -1), 14: (0x28, 1), 15: (0x0D, 0), 16: (0x1B, 0)}  # ← → ↑ ↓ ⏎ Esc
-# While the rotary is open from the mouse or the keyboard: + and − (and the keypad's) turn it into the volume ring
-# and then turn that ring.
-VOLUME_KEYS = {17: (0xBB, 1), 18: (0xBD, -1), 19: (0x6B, 1), 20: (0x6D, -1)}
+HK_NAV = 11                        # and on: the keys that work while the rotary is open (see _open_keys)
+# While the rotary is open from the mouse or the keyboard, besides the keys chosen in Settings (← → ⏎ Esc unless
+# changed): ↑ and ↓ move too, and + and − (and the keypad's) turn it into the volume ring and then turn that ring.
+EXTRA_OPEN_KEYS = (("up", "up"), ("down", "down"), ("louder", "equal"), ("quieter", "minus"),
+                   ("louder", "kp_add"), ("quieter", "kp_subtract"))      # (what it does, key)
 
 
 class HotkeyWindow(QWidget):
@@ -403,6 +389,8 @@ class RotaryApp(QObject):
             posix.prepare_keyboard()           # macOS: has to happen on this (the main) thread
         self._hotkey_now = None
         self._assist_hotkey_now = None
+        self._hotkeys_paused = False       # Settings is recording a new shortcut
+        self._open_keys_now: dict[int, str] = {}     # hotkey id → what it does, while the rotary is open
         self.keyboard_session = False      # opened from the keyboard or the notch: mouse + arrow keys work
         self._kb_fg = 0                    # the window that was in front when it opened
         # slides / video rings: what's in front decides how the rotary opens
@@ -548,8 +536,8 @@ class RotaryApp(QObject):
             self.tour.end(False)
             self.tour.deleteLater()
         gen = self.cfg.get("general", {})
-        hotkey = HOTKEY_LABELS.get(gen.get("hotkey", "ctrl+alt+space"), "")
-        assist_key = ASSIST_LABELS.get((self.cfg.get("assist") or {}).get("hotkey", ""), "")
+        hotkey = keys.label(gen.get("hotkey", "ctrl+alt+space"))
+        assist_key = keys.label((self.cfg.get("assist") or {}).get("hotkey", ""))
         ctx = tutorial.Context.from_config(self.cfg, hotkey, assist_key)
         ap = self.cfg.get("appearance", {})
         self.tour = TutorialWindow(tutorial.steps_for(ctx), {"assist": _keycaps(assist_key)},
@@ -740,8 +728,9 @@ class RotaryApp(QObject):
         self.notch.set_options(island)
         self.notch.set_position(island.get("position"))
         self.live.configure(island)
-        self.notch.set_hotkey(HOTKEY_LABELS.get(gen.get("hotkey", "ctrl+alt+space"), ""))
-        self.mouse_trigger.configure(gen.get("mouse_button", "middle"))
+        self.notch.set_hotkey(keys.label(gen.get("hotkey", "ctrl+alt+space")))
+        self.mouse_trigger.configure(gen.get("mouse_button", "middle"), gen.get("mouse_select", "off"),
+                                     gen.get("mouse_close", "off"))
         self._register_hotkey()
         self._update_notch()
         self._update_pill()
@@ -794,29 +783,50 @@ class RotaryApp(QObject):
 
     # ------------------------------------------------------------ hotkeys
     def _register_hotkey(self) -> None:
-        want = self.cfg.get("general", {}).get("hotkey", "ctrl+alt+space")
-        if want != self._hotkey_now:
-            self.hotkeys.unregister(HK_TOGGLE)
-            self._hotkey_now = want
-            if want in HOTKEYS:
-                mods, vk = HOTKEYS[want]
-                if not self.hotkeys.register(HK_TOGGLE, mods | MOD_NOREPEAT, vk):
-                    self._flash_msg(f"{want.replace('+', ' + ').title()} is used by another app", "error", AMBER, 4.0)
-        want = assist.settings(self.cfg)["hotkey"]
-        if want != self._assist_hotkey_now:
-            self.hotkeys.unregister(HK_ASSIST)
-            self._assist_hotkey_now = want
-            if want in ASSIST_HOTKEYS:
-                mods, vk = ASSIST_HOTKEYS[want]
-                if not self.hotkeys.register(HK_ASSIST, mods | MOD_NOREPEAT, vk):
-                    self._flash_msg(f"{want.replace('+', ' + ').title()} is used by another app", "error", AMBER, 4.0)
+        if self._hotkeys_paused:
+            return
+        for hid, want, now in ((HK_TOGGLE, self.cfg.get("general", {}).get("hotkey", "ctrl+alt+space"),
+                                self._hotkey_now),
+                               (HK_ASSIST, assist.settings(self.cfg)["hotkey"], self._assist_hotkey_now)):
+            if want == now:
+                continue
+            self.hotkeys.unregister(hid)
+            if hid == HK_TOGGLE:
+                self._hotkey_now = want
+            else:
+                self._assist_hotkey_now = want
+            combo = keys.parse(want)
+            if combo is not None and not self.hotkeys.register(hid, combo[0] | MOD_NOREPEAT, combo[1]):
+                self._flash_msg(f"{keys.label(want)} is used by another app", "error", AMBER, 4.0)
+
+    def pause_hotkeys(self, paused: bool) -> None:
+        """While Settings records a new shortcut, the current ones let the keys through to it."""
+        self._hotkeys_paused = paused
+        self.hotkeys.unregister(HK_TOGGLE)
+        self.hotkeys.unregister(HK_ASSIST)
+        self._hotkey_now = self._assist_hotkey_now = None
+        if not paused:
+            self._register_hotkey()
+
+    def _open_keys(self) -> list[tuple[str, str]]:
+        """(key, what it does) for each key that works while the rotary is open from the keyboard, the mouse or
+        the notch: the ones chosen in Settings, then ↑ ↓ + − unless one of those is taken."""
+        out, taken = [], set()
+        for action, combo in [*keys.rotary_keys(self.cfg.get("general")).items(), *EXTRA_OPEN_KEYS]:
+            if combo and combo not in taken:
+                taken.add(combo)
+                out.append((combo, action))
+        return out
 
     def _nav_keys(self, on: bool) -> None:
-        for hid, (vk, _d) in {**NAV, **VOLUME_KEYS}.items():
-            if on:
-                self.hotkeys.register(hid, 0, vk)
-            else:
-                self.hotkeys.unregister(hid)
+        for hid in self._open_keys_now:
+            self.hotkeys.unregister(hid)
+        self._open_keys_now = {}
+        if on:
+            for i, (combo, action) in enumerate(self._open_keys()):
+                parsed = keys.parse(combo)
+                if parsed is not None and self.hotkeys.register(HK_NAV + i, *parsed):
+                    self._open_keys_now[HK_NAV + i] = action
 
     def _end_keyboard(self) -> None:
         if self.keyboard_session:
@@ -904,26 +914,27 @@ class RotaryApp(QObject):
             else:
                 self.open_manual()
             return
-        if hid in VOLUME_KEYS and self.engine.phase == Phase.OPEN:
+        action = self._open_keys_now.get(hid)
+        if action is None or self.engine.phase != Phase.OPEN:
+            return
+        if action in ("louder", "quieter"):
             if self.mode != "volume":
                 self._enter_volume()
+                return
+            self._handle(self.engine.key_step(1 if action == "louder" else -1, now))
+        elif action == "select":
+            self._handle(self.engine.key_execute(now))
+        elif action == "back":
+            if self.levels:
+                self._go_back()
             else:
-                self._handle(self.engine.key_step(VOLUME_KEYS[hid][1], now))
-                self.dial.set_state(self.engine.snapshot())
-            return
-        if hid in NAV and self.engine.phase == Phase.OPEN:
-            vk, delta = NAV[hid]
-            if vk == 0x0D:
-                self._handle(self.engine.key_execute(now))
-            elif vk == 0x1B:
-                if self.levels:
-                    self._go_back()
-                else:
-                    self._close_manual("keyboard")
-            else:
-                if self.mode == "volume" and vk in (0x26, 0x28):
-                    delta = -delta                       # ↑ louder, ↓ quieter
-                self._handle(self.engine.key_step(delta, now))
+                self._close_manual("keyboard")
+        else:
+            delta = -1 if action in ("prev", "up") else 1
+            if self.mode == "volume" and action in ("up", "down"):
+                delta = -delta                           # ↑ louder, ↓ quieter
+            self._handle(self.engine.key_step(delta, now))
+        if self.engine.phase == Phase.OPEN:
             self.dial.set_state(self.engine.snapshot())
 
     # ------------------------------------------------------------ notch & mouse
@@ -951,6 +962,8 @@ class RotaryApp(QObject):
         elif kind == "close":
             if self.engine.phase == Phase.OPEN:
                 self._close_manual("mouse")
+        elif kind == "choose":                 # the mouse button chosen to open what's highlighted
+            self._on_dial_mouse("open", 0)
         elif kind in ("turn", "back"):
             self._on_dial_mouse(kind, n)
 
