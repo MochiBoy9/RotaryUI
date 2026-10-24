@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Discord calls in the desktop app.** A Discord crash or update that happened while it held the microphone
+  left Windows saying "Discord is using the mic" for good, so RotaryUI showed a Discord call that never ended,
+  timed from that day (2418:20:00). That phantom call also hid every real call ringing in from Discord's app,
+  since its ringtone counted as sounds from the call. A mic entry that predates the running Discord no longer
+  counts, a call can't have started before its app did, and a start time over a day old counts from now.
+- **Leave in Discord.** It presses Discord's own *Disconnect* button now, so it works without first giving
+  Discord a keybind. The Ctrl + Shift + H keybind is still pressed if the button can't be found.
+
 ## [2.1.0]
 
 ### Fixed

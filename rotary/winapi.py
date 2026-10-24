@@ -110,6 +110,7 @@ else:
     kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
                                                     ctypes.POINTER(wintypes.DWORD)]
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
     kernel32.GetCurrentThreadId.restype = wintypes.DWORD
     kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
     kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
@@ -243,6 +244,23 @@ def process_path(pid: int) -> str:
         if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
             return buf.value
         return ""
+    finally:
+        kernel32.CloseHandle(h)
+
+
+def process_started(pid: int) -> float:
+    """When a process started (Unix time), or 0 if that can't be read."""
+    if not WIN:
+        return 0.0
+    h = kernel32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return 0.0
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]   # created, exited, kernel, user
+        if not kernel32.GetProcessTimes(h, *[ctypes.byref(t) for t in times]):
+            return 0.0
+        ft = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
+        return ft / 1e7 - 11644473600.0 if ft else 0.0
     finally:
         kernel32.CloseHandle(h)
 
