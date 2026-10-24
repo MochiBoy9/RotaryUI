@@ -6,8 +6,10 @@ import re
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractButton, QColorDialog, QDialog, QFrame, QGridLayout, QHBoxLayout,
-                               QLabel, QLineEdit, QScrollArea, QSlider, QToolButton, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QPushButton, QScrollArea, QSlider, QToolButton, QVBoxLayout,
+                               QWidget)
 
+from .. import MAC, WIN, keys
 from .glass import DISPLAY, ICONS, TEXT, family, font, white
 
 UI_SCALE = 1.0   # text size multiplier for the settings window (Accessibility → Text size)
@@ -655,3 +657,133 @@ class PresetTile(QAbstractButton):
     def leaveEvent(self, e):
         self.update()
         super().leaveEvent(e)
+
+
+# --------------------------------------------------------------------------- recording a keyboard shortcut
+_QT_KEYS = {Qt.Key.Key_Space: "space", Qt.Key.Key_Return: "enter", Qt.Key.Key_Enter: "enter",
+            Qt.Key.Key_Escape: "esc", Qt.Key.Key_Tab: "tab", Qt.Key.Key_Backtab: "tab",
+            Qt.Key.Key_Backspace: "backspace", Qt.Key.Key_Left: "left", Qt.Key.Key_Up: "up",
+            Qt.Key.Key_Right: "right", Qt.Key.Key_Down: "down", Qt.Key.Key_Home: "home", Qt.Key.Key_End: "end",
+            Qt.Key.Key_PageUp: "pageup", Qt.Key.Key_PageDown: "pagedown", Qt.Key.Key_Insert: "insert",
+            Qt.Key.Key_Delete: "delete", Qt.Key.Key_Equal: "equal", Qt.Key.Key_Plus: "equal",
+            Qt.Key.Key_Minus: "minus", Qt.Key.Key_Underscore: "minus"}
+_QT_MODS = (Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Shift, Qt.Key.Key_Meta, Qt.Key.Key_AltGr,
+            Qt.Key.Key_Super_L, Qt.Key.Key_Super_R)
+_QT_MOD_VALUES = {int(m.value) for m in _QT_MODS}
+_VK_KEYS = {vk: name for name, vk in keys.KEYS.items()}
+
+
+def qt_mods(m: Qt.KeyboardModifier) -> list[str]:
+    """Qt's modifiers in keys.py's names. On a Mac Qt calls ⌘ Control and ⌃ Meta."""
+    ctrl, meta = Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.MetaModifier
+    if MAC:
+        ctrl, meta = meta, ctrl
+    out = []
+    for flag, name in ((ctrl, "ctrl"), (Qt.KeyboardModifier.AltModifier, "alt"),
+                       (Qt.KeyboardModifier.ShiftModifier, "shift"), (meta, "win")):
+        if m & flag:
+            out.append(name)
+    return out
+
+
+def qt_key_name(key: int, mods: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, native_vk: int = 0) -> str:
+    """A key press as keys.py names it ("a", "7", "f5", "pageup"), or "" for a key it doesn't know."""
+    k = int(key)
+    if Qt.Key.Key_A.value <= k <= Qt.Key.Key_Z.value:
+        return chr(k).lower()
+    if Qt.Key.Key_0.value <= k <= Qt.Key.Key_9.value:
+        return chr(k)
+    if Qt.Key.Key_F1.value <= k <= Qt.Key.Key_F12.value:
+        return f"f{k - Qt.Key.Key_F1.value + 1}"
+    if mods & Qt.KeyboardModifier.KeypadModifier and k in (Qt.Key.Key_Plus.value, Qt.Key.Key_Minus.value):
+        return "kp_add" if k == Qt.Key.Key_Plus.value else "kp_subtract"
+    for qk, name in _QT_KEYS.items():
+        if qk.value == k:
+            return name
+    if WIN and native_vk in _VK_KEYS:
+        return _VK_KEYS[native_vk]          # Shift + 1 is "!" to Qt, but still the 1 key to Windows
+    return ""
+
+
+class KeyRecorder(QPushButton):
+    """Shows a keyboard shortcut; click it and press keys to change it. Esc cancels, Backspace turns it off
+    (when that's allowed). `shortcut` = True: it has to work from any app, so a plain letter isn't enough."""
+    changed = Signal(str)          # the new shortcut ("ctrl+alt+k", or "off")
+    recording = Signal(bool)
+
+    def __init__(self, combo: str, shortcut: bool = True, can_turn_off: bool = True):
+        super().__init__()
+        self.combo = combo
+        self.shortcut = shortcut
+        self.can_turn_off = can_turn_off
+        self.active = False
+        self.setCheckable(True)
+        self.setMinimumWidth(190)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setToolTip("Click, then press the keys" + (". Backspace turns it off" if can_turn_off else ""))
+        self.clicked.connect(lambda: self._record(not self.active))
+        self._show()
+
+    def set_combo(self, combo: str) -> None:
+        self.combo = combo
+        if not self.active:
+            self._show()
+
+    def _show(self, text: str = "") -> None:
+        self.setChecked(self.active)
+        self.setText(text or keys.label(self.combo) or "Off")
+        self.setAccessibleDescription(f"Now {keys.label(self.combo) or 'off'}. Press to change")
+
+    def _record(self, on: bool) -> None:
+        if on == self.active:
+            return
+        self.active = on
+        self.recording.emit(on)
+        if on:
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._show("Press keys…")
+            self.grabKeyboard()
+        else:
+            self.releaseKeyboard()
+            self._show()
+
+    def _set(self, combo: str) -> None:
+        self._record(False)
+        if combo != self.combo:
+            self.combo = combo
+            self._show()
+            self.changed.emit(combo)
+
+    def focusOutEvent(self, e) -> None:
+        self._record(False)
+        super().focusOutEvent(e)
+
+    def keyPressEvent(self, e) -> None:
+        if not self.active:
+            super().keyPressEvent(e)
+            return
+        e.accept()
+        mods = qt_mods(e.modifiers())
+        if int(e.key()) in _QT_MOD_VALUES:
+            # Qt leaves the key being pressed out of the modifiers: add it
+            own = {int(Qt.Key.Key_Control.value): "win" if MAC else "ctrl", int(Qt.Key.Key_Alt.value): "alt",
+                   int(Qt.Key.Key_Shift.value): "shift", int(Qt.Key.Key_Meta.value): "ctrl" if MAC else "win"}
+            held = mods + [own[int(e.key())]] if own.get(int(e.key())) not in (None, *mods) else mods
+            self._show(keys.label("+".join(held + ["…"])) if held else "Press keys…")
+            return
+        name = qt_key_name(e.key(), e.modifiers(), e.nativeVirtualKey())
+        if not mods and name == "esc" and self.shortcut:
+            self._record(False)             # Esc on its own cancels (it's fine as a key on the open rotary)
+            return
+        if not mods and name in ("backspace", "delete") and self.can_turn_off:
+            self._set("off")
+            return
+        if not name:
+            self._show("Not that key — try another")
+            return
+        combo = keys.normalize("+".join(mods + [name]))
+        problem = keys.global_problem(combo) if self.shortcut else ""
+        if problem:
+            self._show(problem)
+            return
+        self._set(combo)

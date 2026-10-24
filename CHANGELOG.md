@@ -6,6 +6,15 @@
 - **The notch on any edge.** Bring the notch to the bottom, left or right edge of the screen (drag it there or
   throw it) and it hangs from that edge just like it does from the top: slide it along, pull it away to tear it
   off. It remembers which edge it was on.
+- **Mouse buttons to open the highlighted item and to close the rotary** (*Accessibility → Keyboard & mouse*).
+  Left click anywhere opens what's highlighted and right click closes, or use the middle or a side button: scroll
+  to an item and click, no aiming needed. Over the ring a left click still opens the item under the pointer.
+  A side button can both open the rotary and then open the item.
+- **Any keyboard shortcut.** The shortcuts that open the rotary and Screen assist are no longer picked from a
+  short list: click one and press the keys you want (letters, digits, F1–F12, Space, arrows, Home/End, Page
+  Up/Down…, with Ctrl, Alt, Shift or Win/⌘). Backspace turns one off. The existing ones carry over.
+- **Keys on the open rotary.** Previous, next, open and back/close (← → Enter Esc) can each be set to another
+  key, such as A and D. ↑ ↓ + − keep working unless you give one of them a job.
 
 ### Fixed
 - **Discord calls in the desktop app.** A Discord crash or update that happened while it held the microphone

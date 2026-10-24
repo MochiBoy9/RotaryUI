@@ -223,3 +223,39 @@ def test_mouse_hook_counts_the_volume_button_as_the_rotary():
     assert m.take() == [("close", 0)]
     m.set_active(False)
     assert m.zones == ()
+
+
+def test_click_anywhere_opens_the_highlighted_item_and_right_click_closes():
+    """Settings → Keyboard & mouse: left click opens what's highlighted, right click closes, wherever the
+    pointer is — but over the ring a left click still opens the item under it."""
+    m = MouseLogic("middle", select="left", close="right")
+    m.set_active(True, (500, 500, 300))                      # opened for the mouse / keyboard
+    assert m.feed("down", "left", 50, 50) and m.take() == [("choose", 0)]
+    assert m.feed("up", "left", 50, 50)                      # its release is ours too
+    assert m.feed("down", "right", 50, 50) and m.take() == [("close", 0)]
+    assert m.feed("up", "right", 50, 50)
+    assert m.feed("down", "right", 500, 500) and m.take() == [("close", 0)]     # on the ring: closes, not back
+    assert m.feed("up", "right", 500, 500)
+    assert m.feed("down", "left", 520, 520) and m.take() == []
+    assert m.take_pointer() == [("press", 520, 520)]         # on the ring: the item under the pointer
+    m.set_active(False)
+    assert m.feed("up", "left", 520, 520)
+    assert not m.feed("down", "left", 50, 50) and not m.feed("down", "right", 50, 50)   # closed: the app's
+    assert m.take() == []
+
+
+def test_choose_and_close_buttons_on_a_hand_opened_rotary_only_count_on_the_ring():
+    m = MouseLogic("middle", select="forward", close="back")
+    m.set_active(True, (500, 500, 300), manual=False)
+    assert not m.feed("down", "back", 50, 50)                 # a browser's back button, as usual
+    assert m.feed("down", "forward", 500, 500) and m.take() == [("choose", 0)]
+    assert m.feed("down", "back", 500, 500) and m.take() == [("close", 0)]
+
+
+def test_one_side_button_can_open_the_rotary_and_then_the_item():
+    m = MouseLogic("forward", select="forward")
+    assert m.feed("down", "forward", 50, 50) and m.take() == [("toggle", 0)]
+    assert m.feed("up", "forward", 50, 50)
+    m.set_active(True, (500, 500, 300))
+    assert m.feed("down", "forward", 50, 50) and m.take() == [("choose", 0)]
+    assert m.feed("up", "forward", 50, 50)

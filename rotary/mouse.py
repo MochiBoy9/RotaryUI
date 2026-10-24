@@ -14,6 +14,11 @@ it's open from the mouse, the keyboard or the notch, the wheel also turns it whe
 outside it closes it, and a right-click goes back; opened by a hand, the mouse outside the ring is left alone.
 (The rotary's own window never takes the keyboard focus either.)
 
+Mouse users can also pick a button that opens whatever is highlighted and one that closes the rotary, wherever
+the pointer is (Settings → Accessibility → Keyboard & mouse): left click to open and right click to close, say,
+so you can scroll to an item and click without aiming at it. Over the ring itself a left click still opens the
+item under the pointer; opened by a hand, these buttons only count over the ring.
+
 Windows: a low-level mouse hook on its own thread. macOS: a Quartz event tap through pynput (it needs the
 Accessibility permission, like pressing keys). Linux (X11): pynput can watch the mouse but not hold events
 back, so there the clicks and scrolls also reach the app underneath, and a rotary window that takes the mouse
@@ -37,17 +42,21 @@ DRAG_PIXELS = 10               # moving further than this while holding is a dra
 TAG = 0x47524F54               # 'GROT': marks the clicks we replay, so we let them through
 
 BUTTONS = {"middle", "back", "forward"}
+SELECT_BUTTONS = {"left", "middle", "back", "forward"}     # opens the highlighted item while the rotary is open
+CLOSE_BUTTONS = {"right", "middle", "back", "forward"}     # closes it
 
 
 class MouseLogic:
     """Feed it mouse events; it says whether to hold each one back from the app underneath and what the rotary
     should do. Events out: "toggle" (open, or close if open), "open", "turn" (±1 per wheel notch: +1 = next
-    item), "close", "back". Pointer events out, for pressing and dragging on the rotary: ("press" | "drag" |
+    item), "close", "back", "choose" (open the highlighted item). Pointer events out, for pressing and dragging on the rotary: ("press" | "drag" |
     "release", x, y) in the hook's coordinates. `replay` is set to "middle" when a held-back quick middle click
     should be sent on to the app after all."""
 
-    def __init__(self, button: str = "middle"):
+    def __init__(self, button: str = "middle", select: str = "", close: str = ""):
         self.button = button if button in BUTTONS else ""
+        self.select = select if select in SELECT_BUTTONS else ""     # "" = off
+        self.close = close if close in CLOSE_BUTTONS else ""
         self.active = False                  # the rotary is on screen
         self.manual = False                  # …opened for the mouse / keyboard: the mouse outside it is ours too
         self.window = False                  # its own window takes the mouse over it (Linux, mouse / keyboard)
@@ -114,6 +123,15 @@ class MouseLogic:
             if self.pressed:
                 self.pointer.append(("drag", x, y))
             return False                      # never hold a move back: the pointer would freeze
+
+        # the buttons chosen to open the highlighted item and to close the rotary (ahead of the trigger button,
+        # so one side button can open the rotary and then open the item)
+        if kind == "down" and button and self.active and button in (self.select, self.close):
+            inside = self._inside(x, y)
+            if (self.manual or inside) and not (inside and (self.window or button == "left")):
+                self._eat_up.add(button)
+                self.out.append(("choose", 0) if button == self.select else ("close", 0))
+                return True
 
         # the trigger button
         if button and button == self.button:
@@ -199,14 +217,18 @@ class MouseTrigger(QObject):
         self._failed = False
         self.button = ""
 
-    def configure(self, button: str) -> None:
-        """"middle" | "back" | "forward" | "off". The mouse keeps working on the rotary either way."""
+    def configure(self, button: str, select: str = "off", close: str = "off") -> None:
+        """button: "middle" | "back" | "forward" | "off". The mouse keeps working on the rotary either way.
+        select / close: the button that opens the highlighted item / closes the rotary while it's open
+        ("left" / "right" / "middle" / "back" / "forward" | "off")."""
         button = button if button in BUTTONS else ""
         if button != self.button:
             self._failed = False          # a new setting (or a permission granted since): worth another try
         self.button = button
         with self._lock:
             self.logic.button = button
+            self.logic.select = select if select in SELECT_BUTTONS else ""
+            self.logic.close = close if close in CLOSE_BUTTONS else ""
         if self._backend is None and not self._failed:
             try:
                 self._backend = _WindowsHook(self) if sys.platform == "win32" else _PynputWatch(self)
