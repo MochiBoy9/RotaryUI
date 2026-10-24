@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.1.1]
 
 ### Added
 - **The notch on any edge.** Bring the notch to the bottom, left or right edge of the screen (drag it there or
