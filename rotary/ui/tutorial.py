@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWi
 from .. import tutorial
 from . import widgets
 from .glass import TEXT, font, qcolor, white
-from .widgets import ACCENT, GREEN, paint_glass
+from .widgets import ACCENT, GREEN, paint_panel
 
 SKIN = QColor(255, 255, 255, 235)
 SKIN_BACK = QColor(200, 200, 210, 215)
@@ -478,7 +478,7 @@ class TutorialWindow(QWidget):
         base = QPainterPath()
         base.addRoundedRect(r, 24, 24)
         p.fillPath(base, QColor(22, 22, 28, 238))       # it floats over anything: keep the text readable
-        paint_glass(p, r, 24)
+        paint_panel(p, r, 24)
         p.end()
 
     # ----------------------------------------------------------------- input

@@ -245,8 +245,8 @@ def tray_icon(active: bool = True) -> QIcon:
 # metric hand skeleton; the face detector's box is about FACE_SIZE_M across), so comparing how many image
 # heights a metre takes up on each gives the ratio of their distances.
 FACE_SIZE_M = 0.16        # real size of the face detector's box (cheek to cheek / brow to chin), metres
-TOUCH_DEPTH = 1.3         # a hand less than this much closer to the camera than the face is touching it
-TOUCH_DEPTH_EXIT = 1.45   # once touching, it has to come this far forward to count as in front again
+TOUCH_DEPTH = 1.18        # a hand less than this much closer to the camera than the face is touching it
+TOUCH_DEPTH_EXIT = 1.32   # once touching, it has to come this far forward to count as in front again
 
 
 def face_depth(f: HandFeatures, face: tuple[float, float, float, float], aspect: float) -> float:
@@ -834,8 +834,11 @@ class RotaryApp(QObject):
         ox = oy = k = None
         if WIN:
             r = wintypes.RECT()
-            if winapi.user32.GetWindowRect(wintypes.HWND(int(d.winId())), ctypes.byref(r)):
-                ox, oy, k = r.left, r.top, (r.right - r.left) / max(1, d.width())
+            try:
+                if winapi.user32.GetWindowRect(wintypes.HWND(int(d.winId())), ctypes.byref(r)):
+                    ox, oy, k = r.left, r.top, (r.right - r.left) / max(1, d.width())
+            except Exception:          # never let this stop the rotary opening: Qt's geometry below will do
+                log.warning("couldn't read the rotary's window position", exc_info=True)
         if k is None:
             g = d.geometry()
             k = d.devicePixelRatioF() if LINUX else 1.0

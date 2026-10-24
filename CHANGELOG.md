@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.1.0]
+
+### Fixed
+- **Slides, video and volume rings, and the mouse on the rotary.** Opening the rotary failed half-way
+  on Windows (a mismatch in how the rotary's screen position was asked for), so the check for PowerPoint, Google
+  Slides, YouTube, Netflix, VLC and the rest never ran, the volume ring never appeared, and the mouse (scroll,
+  drag, click, right-click) never got hold of the ring, however it was opened. The check also looks
+  past RotaryUI's own windows now, so opening from the notch or the tray still finds the app underneath.
+- **Pinch.** A touching pinch often read as slightly apart (the camera guesses depth), and the other fingers had to
+  be fully open. It's now measured from both the 3D hand and the picture, counts with the other fingers relaxed,
+  takes two frames instead of three, and a pinch that tips the palm away for a moment still clicks.
+- **"Touching your face" when you weren't.** A hand held up in front of the face has to be closer to the face
+  before it counts as touching it, so gestures made in front of the face work more often.
+
+### Changed
+- **Far less CPU.** The rotary is drawn at most 60 times a second (not once per refresh on a 120/144 Hz screen),
+  and not at all while nothing on it moves: held still, it uses about a tenth of what it did. The camera runs at
+  30 fps and hand tracking looks at up to 30 frames a second with a hand about and 12 with nobody around.
+  (MediaPipe's Windows build can't run hand tracking on the GPU, so it stays on the CPU, using less of it.)
+- **Hand tracking keeps hold of hands more readily** in dim light, side-on and when moving fast; the 30 fps camera
+  also gets brighter, less noisy pictures.
+- **The window is plain now.** Cards, the sidebar and the background are solid; liquid glass stays on the rotary.
+  The *Window background* setting is gone.
+
 ## [2.0.0] — RotaryUI
 
 ### Added

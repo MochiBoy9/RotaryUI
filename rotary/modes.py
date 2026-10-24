@@ -125,11 +125,26 @@ def foreground() -> tuple[str, str]:
 def _foreground_windows() -> tuple[str, str]:
     import ctypes
     from ctypes import wintypes
-    hwnd = winapi.user32.GetForegroundWindow()
+    user32 = winapi.user32
+    hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return "", ""
     pid = wintypes.DWORD()
-    winapi.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    # Opened from the notch, the tray or our own window, the app in front is us: look at the window under it.
+    hops = 0
+    while pid.value == os.getpid() and hops < 64:
+        hwnd = user32.GetWindow(hwnd, 2)                  # GW_HWNDNEXT: next window down the z-order
+        if not hwnd:
+            return "", ""
+        hops += 1
+        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd) or user32.GetWindow(hwnd, 4):   # GW_OWNER
+            continue
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value != os.getpid() and not winapi._title(hwnd):
+            pid.value = os.getpid()                       # untitled helper windows (tooltips, shadows): skip
+    if pid.value == os.getpid():
+        return "", ""
     exe = os.path.basename(winapi.process_path(pid.value))
     title = winapi._title(hwnd)
     if exe.lower() == "applicationframehost.exe":

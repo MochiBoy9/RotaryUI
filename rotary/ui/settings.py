@@ -32,7 +32,6 @@ from ..live import clip_folders
 from .dial import DialPainter
 from .notch import DEFAULT_OPTIONS as DEFAULT_ISLAND
 from .notch import system_24h
-from .backdrop import STYLES as BACKDROPS
 from .glass import BUNDLED_TEXT, ICONS, SYSTEM_TEXT, TEXT, app_icon, blur_backdrop, font, font_choices, white
 from .widgets import (Card, ColorPicker, GlyphPicker, PresetTile, Row, Segmented, SliderControl, Switch,
                       icon_button, scroll_page, stylesheet)
@@ -998,7 +997,7 @@ class RotaryPage(QWidget):
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list.model().rowsMoved.connect(self._reordered)
         self.list.currentRowChanged.connect(self._select)
-        pane = widgets.GlassPanel(radius=16)
+        pane = widgets.Panel(radius=16)
         pl = QVBoxLayout(pane)
         pl.setContentsMargins(6, 6, 6, 6)
         pl.addWidget(self.list)
@@ -2487,11 +2486,6 @@ class GeneralPage(QWidget):
         self.font.setCurrentIndex(i if i >= 0 else 0)
         self.font.currentIndexChanged.connect(lambda _i: self.set("appearance", "font", self.font.currentData() or ""))
         c.add(Row("Font", "Used in this window, on the rotary, in the notch and in status messages", self.font))
-        self.backdrop = Segmented(BACKDROPS, ap.get("window_backdrop", "wallpaper"))
-        self.backdrop.setFixedWidth(300)
-        self.backdrop.changed.connect(self._backdrop)
-        c.add(Row("Window background", "Wallpaper shows your desktop picture, softly blurred, through the glass",
-                  self.backdrop))
         self.size = SliderControl(460, 760, 20, ap.get("dial_size", 540), lambda x: f"{x:.0f} px")
         self.size.changed.connect(lambda x: self.set("appearance", "dial_size", int(x)))
         c.add(Row("Rotary size", None, self.size))
@@ -2576,11 +2570,6 @@ class GeneralPage(QWidget):
 
     def set(self, section: str, key: str, value) -> None:
         self.app.cfg.setdefault(section, {})[key] = value
-        self.app.apply_config()
-
-    def _backdrop(self, style: str) -> None:
-        self.app.cfg.setdefault("appearance", {})["window_backdrop"] = style
-        self.win.set_backdrop(style)
         self.app.apply_config()
 
     def _login(self, on: bool) -> None:
@@ -2764,7 +2753,7 @@ class SectionTile(QAbstractButton):
         p = QPainter(self)
         p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        widgets.paint_glass(p, r, 14, hover=self.underMouse() or self.isDown())
+        widgets.paint_panel(p, r, 14, hover=self.underMouse() or self.isDown())
         if self.hasFocus():
             widgets.focus_ring(p, r, 14)
         t = QRectF(r.left() + 14, r.center().y() - 17, 34, 34)
@@ -2809,7 +2798,7 @@ class HomePage(QWidget):
         v.setContentsMargins(28, 24, 36, 32)
         v.setSpacing(22)
 
-        hero = widgets.GlassPanel(radius=20)
+        hero = widgets.Panel(radius=20)
         hl = QHBoxLayout(hero)
         hl.setContentsMargins(22, 20, 22, 20)
         hl.setSpacing(18)
@@ -2950,15 +2939,11 @@ class MainWindow(QWidget):
         self.resize(1180, 800)
         self.setMinimumSize(980, 660)
         self._dark_done = False
-        self._backdrop: QImage | None = None
-        self._backdrop_style = ""
-        self._scaled: QPixmap | None = None
-        self.set_backdrop(app.cfg.get("appearance", {}).get("window_backdrop", "wallpaper"))
 
         root = QHBoxLayout(self)
         root.setContentsMargins(10, 10, 0, 10)
         root.setSpacing(0)
-        side = widgets.GlassPanel(radius=18, tint=1.0)
+        side = widgets.Panel(radius=18, tint=1.0)
         side.setObjectName("sidebar")
         side.setFixedWidth(240)
         sv = QVBoxLayout(side)
@@ -3157,7 +3142,7 @@ class MainWindow(QWidget):
         if sa is not None:
             sa.ensureWidgetVisible(w, 0, 120)
         glass = w
-        while glass is not None and not isinstance(glass, widgets.GlassPanel):
+        while glass is not None and not isinstance(glass, widgets.Panel):
             glass = glass.parent()
         if glass is not None:
             glass.flash()
@@ -3182,28 +3167,13 @@ class MainWindow(QWidget):
             QTimer.singleShot(150, lambda: None if self.search.hasFocus() else self.results.hide())
         return super().eventFilter(obj, e)
 
-    # ------------------------------------------------------------------ backdrop
-    def set_backdrop(self, style: str) -> None:
-        from . import backdrop
-        self._backdrop, self._backdrop_style = backdrop.make(style)
-        self._scaled = None
-        self.update()
-
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        self._scaled = None
         if self.results.isVisible():
             self._place_results()
 
     def paintEvent(self, _):
-        p = QPainter(self)
-        p.fillRect(self.rect(), QColor(widgets.BG))
-        if self._backdrop is None:
-            return
-        if self._scaled is None or self._scaled.size() != self.size():
-            self._scaled = QPixmap.fromImage(self._backdrop.scaled(
-                self.size(), Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        p.drawPixmap(0, 0, self._scaled)
+        QPainter(self).fillRect(self.rect(), QColor(widgets.BG))
 
     def restyle(self) -> None:
         """After a change of font or text size: style sheets, the sidebar and the pages' drawn text."""

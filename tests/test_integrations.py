@@ -226,7 +226,7 @@ def test_fingertips_on_the_face_count_as_touching():
 
 
 def test_face_touch_has_hysteresis():
-    f = _feat(center=(0.5, 0.32), size=AT_FACE_SIZE * 1.37)
+    f = _feat(center=(0.5, 0.32), size=AT_FACE_SIZE * 1.25)     # between TOUCH_DEPTH and TOUCH_DEPTH_EXIT
     assert not hand_at_face(f, [FACE], 4 / 3)
     assert hand_at_face(f, [FACE], 4 / 3, was=True)      # was touching: has to come further forward to let go
 

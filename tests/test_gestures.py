@@ -49,6 +49,33 @@ def test_pinch():
     assert feats().pinch > 0.45
 
 
+def test_pinch_survives_a_misjudged_depth():
+    """MediaPipe guesses depth: fingertips touching on screen can sit 3 cm apart in its 3D skeleton."""
+    h = make_hand(pinch=True)
+    h.world[4] = h.world[8] + (0.008, 0.008, 0.028)
+    assert extract_features(h).pinch < GestureSettings().pinch_on
+    assert feats(flex=0.3).pinch > GestureSettings().pinch_off      # a relaxed open hand isn't pinching
+
+
+def test_relaxed_pinch_executes():
+    """A pinch reading 0.33 palm lengths (the old 0.30 threshold missed it), the other fingers half curled."""
+    s = Sim(turn_style="direct")
+    s.run(3.1)
+    s.turn(0, -22, seconds=0.3)
+    ev = s.run(2 / FPS, roll_deg=-22, finger_flex=(0.0, 0.45, 0.45, 0.45), feat={"pinch": 0.33})
+    assert "execute" in s.names(ev)
+
+
+def test_pinch_while_the_palm_tips_away_still_clicks():
+    s = Sim(turn_style="direct")
+    s.run(3.1)
+    s.turn(0, -22, seconds=0.3)
+    assert s.run(2 / FPS, roll_deg=-22, feat={"pinch": 0.2, "facing": -0.3}) == []     # palm tipped away
+    assert s.e.pinching
+    ev = s.run(0.3, roll_deg=-22, feat={"pinch": 0.2})
+    assert "execute" in s.names(ev)
+
+
 # ------------------------------------------------------------------ engine
 class Sim:
     def __init__(self, n=8, **settings):

@@ -256,8 +256,8 @@ few quick switches. The sidebar groups the rest under *Rotary*, *Features* and *
 (Ctrl+F, ⌘F on a Mac) finds any setting and takes you straight to it, and Ctrl+1 to Ctrl+9 open the sections.
 
 *General › Appearance* sets the look: the **font** (Inter by default, San Francisco on a Mac, or any font you
-have installed; it's used on the rotary and the notch too) and the **window background** behind the glass:
-your blurred wallpaper, a colourful Aurora, or Plain.
+have installed; it's used on the rotary and the notch too). The window itself is plain and solid; liquid glass is
+kept for the rotary.
 
 ## Accidental-open protection
 

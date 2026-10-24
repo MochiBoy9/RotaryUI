@@ -1,10 +1,10 @@
-"""The settings window's look: the bundled font, the font picker and the glass backdrop."""
+"""The settings window's look: the bundled font, the font picker and its plain panels."""
 import sys
 
 from PySide6.QtGui import QFontDatabase, QFontInfo
 from PySide6.QtWidgets import QApplication
 
-from rotary.ui import backdrop, glass, widgets
+from rotary.ui import glass, widgets
 
 app = QApplication.instance() or QApplication([])
 
@@ -45,9 +45,13 @@ def test_style_sheet_names_the_chosen_font():
         glass.set_text_font("")
 
 
-def test_backdrops():
-    img, style = backdrop.make("aurora")
-    assert style == "aurora" and not img.isNull()
-    assert backdrop.make("plain") == (None, "plain")
-    img, style = backdrop.make("wallpaper")             # the wallpaper, or the aurora when it can't be read
-    assert style in ("wallpaper", "aurora") and not img.isNull()
+def test_window_panels_are_solid_not_glass():
+    """Liquid glass is for the rotary; the window's cards and sidebar are plain, opaque panels."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QColor, QImage, QPainter
+    img = QImage(80, 80, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(QColor(255, 0, 0))
+    p = QPainter(img)
+    widgets.paint_panel(p, QRectF(0, 0, 80, 80), 8)
+    p.end()
+    assert img.pixelColor(40, 40) == QColor(widgets.CARD)          # nothing behind shows through

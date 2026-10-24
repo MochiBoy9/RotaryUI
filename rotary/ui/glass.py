@@ -37,6 +37,15 @@ class Spring:
         return abs(self.target - self.value) < 1e-3 and abs(self.velocity) < 1e-3
 
 
+MAX_FPS = 60.0      # springs look as smooth at 60 frames a second; drawing faster on a 120/144 Hz screen only costs CPU
+
+
+def frame_ms(screen) -> int:
+    """Milliseconds between animation frames on this screen: one per refresh, at most MAX_FPS."""
+    hz = (screen.refreshRate() if screen is not None else 60.0) or 60.0
+    return max(4, int(1000.0 / max(30.0, min(hz, MAX_FPS))))
+
+
 def smoothstep(x: float) -> float:
     x = max(0.0, min(1.0, x))
     return x * x * (3 - 2 * x)

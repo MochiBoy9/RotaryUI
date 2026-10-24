@@ -421,3 +421,35 @@ def test_saved_position_is_restored():
     n.place()
     assert n.docked
     n.hide()
+
+
+def test_rotary_held_still_is_not_painted_again():
+    """While nothing on the rotary moves, a frame looks just like the last one: the window skips painting it."""
+    from rotary.ui.dial import DialPainter
+    dp = DialPainter(build_items(DEFAULT_CONFIG), 600)
+    st = EngineSnapshot(phase=Phase.OPEN, hand_present=True, facing=True, position=0, selected=0)
+    dp.begin(st)
+    dp.set_state(st)
+    for _ in range(240):
+        dp.tick(1 / 60)
+    key = dp.visual_key()
+    dp.set_state(EngineSnapshot(phase=Phase.OPEN, hand_present=True, facing=True, position=0, selected=0,
+                                facing_value=0.71, grip_value=0.13))          # hand jitter the ring doesn't show
+    dp.tick(1 / 60)
+    assert dp.visual_key() == key
+    dp.set_state(EngineSnapshot(phase=Phase.OPEN, hand_present=True, facing=True, position=1, selected=1,
+                                interacted=True))
+    dp.tick(1 / 60)
+    assert dp.visual_key() != key
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows API")
+def test_get_window_rect_takes_the_standard_rect():
+    """app.py hands GetWindowRect a wintypes.RECT; declaring another RECT class broke every gesture opening."""
+    import ctypes
+    from ctypes import wintypes
+
+    from rotary import winapi
+    r = wintypes.RECT()
+    assert winapi.user32.GetWindowRect(wintypes.HWND(winapi.user32.GetDesktopWindow()), ctypes.byref(r))
+    assert r.right > r.left
