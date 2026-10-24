@@ -245,8 +245,8 @@ def tray_icon(active: bool = True) -> QIcon:
 # metric hand skeleton; the face detector's box is about FACE_SIZE_M across), so comparing how many image
 # heights a metre takes up on each gives the ratio of their distances.
 FACE_SIZE_M = 0.16        # real size of the face detector's box (cheek to cheek / brow to chin), metres
-TOUCH_DEPTH = 1.3         # a hand less than this much closer to the camera than the face is touching it
-TOUCH_DEPTH_EXIT = 1.45   # once touching, it has to come this far forward to count as in front again
+TOUCH_DEPTH = 1.18        # a hand less than this much closer to the camera than the face is touching it
+TOUCH_DEPTH_EXIT = 1.32   # once touching, it has to come this far forward to count as in front again
 
 
 def face_depth(f: HandFeatures, face: tuple[float, float, float, float], aspect: float) -> float:

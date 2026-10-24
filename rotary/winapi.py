@@ -360,9 +360,8 @@ GWL_STYLE = -16
 SWP_NOZORDER, SWP_NOACTIVATE, SWP_NOOWNERZORDER = 0x4, 0x10, 0x200
 
 if WIN:
-    class RECT(ctypes.Structure):
-        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long),
-                    ("bottom", ctypes.c_long)]
+    # wintypes' own RECT: other modules call GetWindowRect with it, and ctypes only accepts the declared class.
+    RECT = wintypes.RECT
 
     class MONITORINFO(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", RECT), ("rcWork", RECT), ("dwFlags", wintypes.DWORD)]

@@ -33,8 +33,8 @@ from PySide6.QtWidgets import QMenu, QWidget
 
 from ..live import LiveState, NowPlaying
 from . import liquid
-from .glass import (ICONS, TEXT, Spring, black, exclude_from_capture, font, grab_behind, no_activate, qcolor,
-                    refuse_activation, stroke_rim, white)
+from .glass import (ICONS, TEXT, Spring, black, exclude_from_capture, font, frame_ms, grab_behind, no_activate,
+                    qcolor, refuse_activation, stroke_rim, white)
 
 GREEN, AMBER, RED, BLUE, GRAY, ORANGE = "#30D158", "#FF9F0A", "#FF453A", "#0A84FF", "#8E8E93", "#FF9F0A"
 G_PREV, G_PLAY, G_PAUSE, G_NEXT, G_TIMER, G_MUSIC = "", "", "", "", "", ""
@@ -703,9 +703,7 @@ class NotchWindow(QWidget):
         if not self.isVisible():
             return
         if not self._timer.isActive():
-            screen = self.screen()
-            hz = (screen.refreshRate() if screen else 60.0) or 60.0
-            self._timer.setInterval(max(4, int(1000.0 / max(30.0, min(hz, 165.0)))))
+            self._timer.setInterval(frame_ms(self.screen()))
             self._last = time.perf_counter()
             self._timer.start()
         self._schedule_backdrop()

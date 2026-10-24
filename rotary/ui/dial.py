@@ -14,8 +14,8 @@ from ..actions import Item
 from ..gestures import EngineSnapshot, Phase
 from . import liquid
 from .glass import (DISPLAY, ICONS, TEXT, Spring, angle_point, app_icon, black, circle, ease_out_cubic,
-                    exclude_from_capture, font, glass_disc, grab_behind, no_activate, overlay_flags, qcolor,
-                    refuse_activation, smoothstep, soft_shadow, stroke_rim, white)
+                    exclude_from_capture, font, frame_ms, glass_disc, grab_behind, no_activate, overlay_flags,
+                    qcolor, refuse_activation, smoothstep, soft_shadow, stroke_rim, white)
 
 
 def _wrap180(d: float) -> float:
@@ -338,9 +338,7 @@ class DialPainter:
         # From the mouse or the keyboard a button stands in for the two-finger slider.
         self.button_vis.target = 1.0 if self.keyboard else 0.0
         self.hot_vis.target = 1.0 if self.volume_hot else 0.0
-        for s in (self.appear, self.rot, self.title, self.grip_vis, self.tracked_vis,
-                  self.point_vis, self.push_vis, self.px, self.py, self.level_kick, self.gauge_vis,
-                  self.volume_vis, self.button_vis, self.hot_vis):
+        for s in self._springs():
             s.step(dt)
         if self.items:
             # Ring turned clockwise = positive degrees. Only the primary ring keeps count.
@@ -354,6 +352,25 @@ class DialPainter:
         if self.appear.target == 0.0 and self.appear.value < 0.012 and abs(self.appear.velocity) < 0.5:
             return False
         return True
+
+    def _springs(self) -> tuple[Spring, ...]:
+        return (self.appear, self.rot, self.title, self.grip_vis, self.tracked_vis, self.point_vis, self.push_vis,
+                self.px, self.py, self.level_kick, self.gauge_vis, self.volume_vis, self.button_vis, self.hot_vis)
+
+    def visual_key(self) -> tuple:
+        """Everything a frame shows. While it stays the same the window isn't painted again: a rotary held
+        still costs next to nothing, however long it stays open."""
+        t, st = self.tint, self.state
+        # only what the dial draws from the hand: jitter in the rest (facing, grip strength…) changes nothing here
+        hand = (st.phase, st.hand_present, st.facing, st.gripping, st.pointing, st.grip_mode, st.interacted,
+                st.selected, st.scrolling, st.sliding, round(st.position, 3), round(st.dwell, 3), round(st.push, 3))
+        return (tuple(round(s.value, 4) for s in self._springs()), (t.red(), t.green(), t.blue()),
+                self.exec_t, self.exiting, round(self.open_t, 3) if self.open_t < 2.0 else None, hand,
+                self.mode, sorted(self.info.items(), key=lambda kv: kv[0]), self.crumb, self.keyboard,
+                self.volume_level, self.volume_hot, self._backdrop_ver, self._cache_key, self.weather,
+                [(it.name, it.subtitle, it.glyph, it.tint, it.icon) for it in self.items],
+                sorted(self.controls.items(), key=lambda kv: kv[0]), self.clock_mode, self.text_scale, self.high_contrast,
+                self.reduce_motion, time.localtime().tm_min if self.clock_mode != "off" else 0)
 
     # ------------------------------------------------------------- geometry & caches
     def _geom(self):
@@ -1290,6 +1307,7 @@ class DialWindow(QWidget):
         self._glass_timer = QTimer(self)
         self._glass_timer.setInterval(250)
         self._glass_timer.timeout.connect(self._refresh_glass)
+        self._shown: tuple | None = None          # what the window shows now (DialPainter.visual_key)
 
     def set_items(self, items: list[Item]) -> None:
         self.painter_.set_items(items)
@@ -1345,8 +1363,7 @@ class DialWindow(QWidget):
                            self.painter_.MARGIN))
             raw = grab_behind(self)
             dp.backdrop = liquid.Backdrop.from_pixmap(raw)
-            hz = screen.refreshRate() or 60.0          # one frame per screen refresh, no more
-            self._timer.setInterval(max(4, int(1000.0 / max(30.0, min(hz, 165.0)))))
+            self._timer.setInterval(frame_ms(screen))
             dp.prepare(self.width(), self.height(), screen.devicePixelRatio())
             self.show()
             no_activate(self)                   # clicking it never takes the focus from a full-screen app
@@ -1357,6 +1374,7 @@ class DialWindow(QWidget):
             if self.live_glass and self._excluded:
                 self._glass_timer.start()
         dp.begin(state)
+        self._shown = None
         self._last = time.perf_counter()
         self._timer.start()
 
@@ -1397,9 +1415,13 @@ class DialWindow(QWidget):
         if not self.painter_.tick(dt):
             self._timer.stop()
             self._glass_timer.stop()
+            self._shown = None
             self.hide()
             return
-        self.update()
+        key = self.painter_.visual_key()
+        if key != self._shown:                # nothing moved since the last frame: leave the window as it is
+            self._shown = key
+            self.update()
 
     def paintEvent(self, _ev) -> None:
         p = QPainter(self)

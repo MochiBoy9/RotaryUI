@@ -37,8 +37,8 @@ class ActiveWindow:
     title: str = ""
 
 
-PINCH_ON = 0.32            # thumb-to-index gap (palm lengths) that counts as a pinch
-PINCH_OFF = 0.50           # ...and the gap that lets go
+PINCH_ON = 0.36            # thumb-to-index gap (palm lengths) that counts as a pinch
+PINCH_OFF = 0.52          # ...and the gap that lets go
 HOLD_SECONDS = 0.25        # both hands pinch this long before the window follows
 LOST_SECONDS = 0.35        # a hand out of sight this long ends the resize
 MIN_SPAN = 0.10            # hands closer than this (image heights) along an axis can't steer that axis

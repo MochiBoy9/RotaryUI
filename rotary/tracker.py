@@ -26,6 +26,8 @@ MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
 FACE_PATH = ROOT / "models" / "blaze_face_short_range.tflite"
 FACE_URL = ("https://storage.googleapis.com/mediapipe-models/face_detector/"
             "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite")
+ACTIVE_GAP = 0.026        # seconds between tracked frames with a hand about: ~30 fps (a 60 fps camera skips half)
+IDLE_GAP = 0.075          # …and with nobody around: ~12 fps, still quick to notice a hand coming up
 
 
 @dataclass
@@ -113,11 +115,13 @@ def _make_landmarker():
         base_options=mp_python.BaseOptions(model_asset_buffer=_load_model()),
         running_mode=vision.RunningMode.VIDEO,
         num_hands=2,
-        min_hand_detection_confidence=0.5,
-        # A hand already found keeps being tracked a little more readily: against a face (skin on skin)
-        # the per-frame scores dip, and dropping the hand there would block gestures in front of the face.
-        min_hand_presence_confidence=0.4,
-        min_tracking_confidence=0.4,
+        # A little below MediaPipe's defaults: a hand in dim light, side-on or moving fast scores lower, and a
+        # missed hand stalls a gesture where a doubtful one is still checked by the gesture rules.
+        min_hand_detection_confidence=0.42,
+        # A hand already found keeps being tracked more readily still: against a face (skin on skin) the
+        # per-frame scores dip, and dropping the hand there would block gestures in front of the face.
+        min_hand_presence_confidence=0.32,
+        min_tracking_confidence=0.32,
     )
     return mp, vision.HandLandmarker.create_from_options(opts)
 
@@ -170,7 +174,7 @@ class TrackerThread(QThread):
         next_scan = 0.0
         fails = 0
         last_hand = time.monotonic()
-        frame_n = 0
+        last_t = 0.0
         last_err = 0.0
 
         while not self._stopping:
@@ -225,10 +229,12 @@ class TrackerThread(QThread):
             last_seq, frame, t_cap = capture.latest(last_seq, timeout=0.5)
             if frame is None:
                 continue
-            frame_n += 1
-            # Power saving: nobody around for a while → look 20 times a second instead of 60.
-            if time.monotonic() - last_hand > 6.0 and frame_n % 3 and not self.want_preview:
+            # Hand tracking runs on the CPU (MediaPipe's Windows build has no GPU path), so it looks at no more
+            # frames than gestures need: up to 30 a second with a hand about, 12 once nobody's been seen for a while.
+            idle = time.monotonic() - last_hand > 6.0 and not self.want_preview
+            if t_cap - last_t < (IDLE_GAP if idle else ACTIVE_GAP):
                 continue
+            last_t = t_cap
             try:
                 n_hands = self._process(mp, landmarker, face_det, enhancer, frame, t_cap, capture, faces_box)
             except Exception:

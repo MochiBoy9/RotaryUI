@@ -1,10 +1,10 @@
-"""Small Apple-style widget kit for the settings window: dark liquid glass over a soft backdrop."""
+"""Small Apple-style widget kit for the settings window: plain dark panels."""
 from __future__ import annotations
 
 import re
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractButton, QColorDialog, QDialog, QFrame, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QScrollArea, QSlider, QToolButton, QVBoxLayout, QWidget)
 
@@ -171,43 +171,30 @@ def _check_png() -> str:
     return _CHECK
 
 
-# --------------------------------------------------------------------------- glass
-def paint_glass(p: QPainter, r: QRectF, radius: float, tint: float = 0.0, highlight: float = 0.0,
+# --------------------------------------------------------------------------- panels
+def paint_panel(p: QPainter, r: QRectF, radius: float, tint: float = 0.0, highlight: float = 0.0,
                 hover: bool = False) -> None:
-    """A pane of dark liquid glass: a smoky fill that lets the window's backdrop glow through, a light
-    sheen across the top, and a rim that catches the light at its top edge (like macOS 26 / iOS 26)."""
+    """A plain dark panel: a solid fill and a hairline edge. (Liquid glass is kept for the rotary itself.)"""
     path = QPainterPath()
     path.addRoundedRect(r, radius, radius)
-    fill = QLinearGradient(r.topLeft(), r.bottomLeft())
-    a = 1.0 - 0.25 * tint
-    lift = 14 if hover else 0
-    fill.setColorAt(0, QColor(58 + lift, 58 + lift, 68 + lift, int(150 * a)))
-    fill.setColorAt(0.5, QColor(36 + lift, 36 + lift, 44 + lift, int(150 * a)))
-    fill.setColorAt(1, QColor(30 + lift, 30 + lift, 38 + lift, int(165 * a)))
-    p.fillPath(path, fill)
-    sheen = QLinearGradient(r.topLeft(), QPointF(r.left(), r.top() + min(60.0, r.height() * 0.5)))
-    sheen.setColorAt(0, white(0.07))
-    sheen.setColorAt(1, white(0.0))
-    p.fillPath(path, sheen)
+    base = QColor(SIDEBAR if tint > 0.5 else CARD)
+    if hover:
+        base = base.lighter(118)
+    p.fillPath(path, base)
     if highlight > 0:
         p.fillPath(path, QColor(10, 132, 255, int(70 * highlight)))
-    rim = QLinearGradient(r.topLeft(), r.bottomRight())
-    rim.setColorAt(0, white(0.30))
-    rim.setColorAt(0.35, white(0.09))
-    rim.setColorAt(0.7, white(0.05))
-    rim.setColorAt(1, white(0.16))
-    p.setPen(QPen(rim, 1.0))
+    p.setPen(QPen(white(0.08), 1.0))
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawPath(path)
 
 
-class GlassPanel(QFrame):
-    """A frame drawn as liquid glass (see paint_glass): cards, the sidebar, the home page's hero."""
+class Panel(QFrame):
+    """A frame drawn as a plain panel (see paint_panel): cards, the sidebar, the home page's hero."""
 
     def __init__(self, radius: float = 14, tint: float = 0.0, parent=None):
         super().__init__(parent)
         self.radius = radius
-        self.tint = tint             # 0 (cards) .. 1 (the sidebar: a touch more see-through)
+        self.tint = tint             # 0 (cards) or 1 (the sidebar)
         self.highlight = 0.0         # 0..1: search flashes the card holding what it found
         self._flash = QVariantAnimation(self)
         self._flash.setDuration(1600)
@@ -224,7 +211,7 @@ class GlassPanel(QFrame):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        paint_glass(p, QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), self.radius, self.tint, self.highlight)
+        paint_panel(p, QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), self.radius, self.tint, self.highlight)
 
 
 # --------------------------------------------------------------------------- switch
@@ -384,7 +371,7 @@ class Card(QWidget):
             t = QLabel(title.upper())
             t.setObjectName("h2")
             outer.addWidget(t)
-        self.frame = GlassPanel()
+        self.frame = Panel()
         self.frame.setObjectName("card")
         self.lay = QVBoxLayout(self.frame)
         self.lay.setContentsMargins(0, 4, 0, 4)

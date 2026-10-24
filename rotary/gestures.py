@@ -137,7 +137,6 @@ def extract_features(hand: HandFrame, flip_handedness: bool = False, handedness:
         curls.append(0.5 * c_bend + 0.5 * c_reach)
 
     palm_len_w = _norm(w[MIDDLE_MCP] - w[WRIST]) + 1e-9
-    pinch = _norm(w[THUMB_TIP] - w[INDEX_TIP]) / palm_len_w
 
     center = p[PALM_POINTS].mean(axis=0)
     palm_len_img = _norm(p[MIDDLE_MCP] - p[WRIST])
@@ -152,6 +151,13 @@ def extract_features(hand: HandFrame, flip_handedness: bool = False, handedness:
     # for several palm bones, taking the one lying flattest to the camera (it is the least foreshortened).
     px_per_m_true = max(_norm(p[a] - p[b]) / (_norm(w[a] - w[b]) + 1e-9)
                         for a, b in ((WRIST, INDEX_MCP), (WRIST, MIDDLE_MCP), (WRIST, PINKY_MCP), (INDEX_MCP, PINKY_MCP)))
+
+    # Pinch: the thumb-to-index gap in palm lengths. The 3D skeleton alone reads a touching pinch anywhere from
+    # 0.15 to 0.4 (its depth is a guess, and the fingertip points sit inside the pads), so it's averaged with the
+    # gap on screen against the hand's true on-screen size, which can read short but never long.
+    pinch_w = _norm(w[THUMB_TIP] - w[INDEX_TIP]) / palm_len_w
+    pinch_img = _norm(p[THUMB_TIP] - p[INDEX_TIP]) / (px_per_m_true * palm_len_w + 1e-9)
+    pinch = 0.5 * (pinch_w + min(pinch_img, pinch_w))
 
     lm = hand.landmarks
     x0, y0 = float(lm[:, 0].min()), float(lm[:, 1].min())
@@ -295,8 +301,8 @@ class GestureSettings:
     facing_off: float = 0.06
     grip_on: float = 0.60
     grip_off: float = 0.40
-    pinch_on: float = 0.30
-    pinch_off: float = 0.45
+    pinch_on: float = 0.36
+    pinch_off: float = 0.50
     # volume: index and middle finger up (the others curled), slid up or down like a fader
     volume_slide: bool = True
     volume_distance: float = 0.08     # palm lengths of travel per volume step (2%)
@@ -725,15 +731,16 @@ class GestureEngine:
         else:
             self._two_frames = 0
 
-        # Pinch only counts with the other fingers open.
-        others_open = others < 0.5
+        # Pinch only counts with the other fingers more open than closed (a relaxed pinch curls them a little, a
+        # fist all the way), and after two frames in a row.
+        others_open = others < 0.65
         if self.pinching:
             if f.pinch > s.pinch_off or self.gripping:
                 self.pinching = False
                 self._pinch_frames = 0
         elif f.pinch < s.pinch_on and others_open and not self.gripping:
             self._pinch_frames += 1
-            if self._pinch_frames >= 3:
+            if self._pinch_frames >= 2:
                 self.pinching = True
                 self._pinch_edge = True
         else:
@@ -1188,6 +1195,8 @@ class GestureEngine:
             else:
                 self._dwell = 0.0
         else:
+            # A pinch that tips the palm away for a moment still clicks once the palm is back.
+            self._pinch_edge = pinch_edge and self.pinching
             self._rebase = True
             self._sel_since = now
             self._dwell = 0.0

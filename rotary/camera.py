@@ -35,7 +35,9 @@ elif sys.platform == "darwin":
     BACKENDS = [(cv2.CAP_AVFOUNDATION, "AVFoundation")]
 else:
     BACKENDS = [(cv2.CAP_V4L2, "Video4Linux")]
-REQUEST = (640, 480, 60)
+# 30 fps is all hand tracking uses, costs half the CPU of 60 to decode, and lets the sensor expose twice as long:
+# brighter, less noisy frames in a dim room, where hands are most often missed.
+REQUEST = (640, 480, 30)
 
 
 @dataclass
