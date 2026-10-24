@@ -147,9 +147,11 @@ middle of the top edge; so does *Put the notch back in the middle* in its right-
 or a call app — not already in a call — playing its ringtone for a few seconds. *Accept* and *Decline* press the
 app's own shortcuts: Discord Ctrl + Enter / Esc, Teams Ctrl + Shift + S / Ctrl + Shift + D. Apps without one
 (WhatsApp, Telegram, Signal…) are brought to the front to answer there; Decline just puts the card away.
-**Leave** presses Teams' and Slack's Ctrl + Shift + H and Zoom's Alt + Q. Discord has no built-in key for leaving
-a call: give its *Disconnect from voice channel* keybind **Ctrl + Shift + H** (*User Settings → Keybinds*), or
-set the key you use as `"discord_leave_keys"` under `"island"` in config.json.
+**Leave** presses Teams' and Slack's Ctrl + Shift + H and Zoom's Alt + Q. In Discord it presses the *Disconnect*
+button itself (through Windows' accessibility interface, so nothing needs setting up and Discord stays where it
+is). If Discord is in another language, list its button's name under `"discord_leave_buttons"` in `"island"`
+in config.json; failing that RotaryUI presses Ctrl + Shift + H, so you can also give Discord's *Disconnect from
+voice channel* keybind that key (*User Settings → Keybinds*), or set yours as `"discord_leave_keys"`.
 
 Under the ring the rotary shows the time (9:41 AM, or 24-hour under *General → Appearance*), the date and the
 weather: an icon for sun, cloud, fog, rain, snow or a storm, and the temperature (°F in the US, °C elsewhere).

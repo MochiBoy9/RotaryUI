@@ -1005,9 +1005,10 @@ class RotaryApp(QObject):
             pct = data.get("percent", 0)
             self._alert(f"Battery low · {pct}%", "power", RED if pct <= 10 else AMBER, 5.0)
 
-    # Each app's own shortcuts. Discord has no built-in one for leaving a call: RotaryUI presses
-    # Ctrl+Shift+H, so give Discord's "Disconnect from voice channel" keybind that key (Settings → Keybinds) —
-    # or set another under "island" → "discord_leave_keys" in config.json.
+    # Each app's own shortcuts. Discord has no built-in one for leaving a call: RotaryUI presses its Disconnect
+    # button (UI Automation, see _leave_discord), and only if it can't find one presses Ctrl+Shift+H — give
+    # Discord's "Disconnect from voice channel" keybind that key (Settings → Keybinds), or set another under
+    # "island" → "discord_leave_keys" in config.json.
     CALL_KEYS = {("Discord", "mute"): ("discord", "ctrl+shift+m", ""),
                  ("Discord", "deafen"): ("discord", "ctrl+shift+d", ""),
                  ("Discord", "accept"): ("discord", "ctrl+enter", ""),
@@ -1047,11 +1048,33 @@ class RotaryApp(QObject):
 
         def work():
             try:
+                if (app_name, what) == ("Discord", "leave") and self._leave_discord():
+                    self.action_done.emit(f"{app_name} · {label}", True, "")
+                    return
                 execute(action, self.cfg)
                 self.action_done.emit(f"{app_name} · {label}", True, "")
             except Exception as e:
                 self.action_done.emit(f"{app_name} · {label}", False, str(e))
         threading.Thread(target=work, daemon=True).start()
+
+    DISCORD_LEAVE_BUTTONS = ("Disconnect", "Leave Call", "Leave call", "Hang Up", "Hang up")
+
+    def _leave_discord(self) -> bool:
+        """Press the Disconnect button in Discord's window, the way a screen reader would: no keybind needed,
+        and Discord stays where it is. False if it isn't there (Discord in another language, say)."""
+        if not WIN:
+            return False
+        from . import uia
+        from .live import DISCORD_EXES
+        names = tuple(self.cfg.get("island", {}).get("discord_leave_buttons") or self.DISCORD_LEAVE_BUTTONS)
+        for exe in DISCORD_EXES:
+            for hwnd in winapi.windows_of(exe, include_hidden=True)[:3]:
+                pressed = uia.press_button(hwnd, names)
+                if pressed:
+                    log.info("call: pressed Discord's %r button", pressed)
+                    return True
+        log.info("call: no Disconnect button in Discord's window; pressing its leave keybind instead")
+        return False
 
     def _run_quiet(self, action: dict) -> None:
         try:

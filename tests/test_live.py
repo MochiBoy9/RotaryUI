@@ -185,6 +185,26 @@ def test_discord_voice_socket_means_a_call(monkeypatch):
     assert live.discord_call() is None
 
 
+def test_call_start_is_never_before_the_app_started(monkeypatch):
+    procs = {10: "discord.exe", 12: "discord.exe"}
+    monkeypatch.setattr(live.winapi, "command_line", lambda pid: "discord.exe --type=renderer")
+    monkeypatch.setattr(live.winapi, "process_started", lambda pid: {10: 5000.0, 12: 4000.0}[pid])
+    live._cmdlines.clear()
+    live._started.clear()
+    monkeypatch.setattr(live, "udp_sockets", lambda: [(10, 1000.0)])
+    assert live.discord_call(procs) == 5000.0              # a socket can't predate its process
+    assert live.app_started("discord.exe", procs) == 4000.0
+    assert live.app_started("discord.exe", {12: "discord.exe"}) == 4000.0 and 10 not in live._started
+    assert live.app_started("zoom.exe", procs) == 0.0
+
+
+def test_ui_automation_is_windows_only():
+    from rotary import uia
+    if sys.platform != "win32":
+        assert uia.press_button(123, ("Disconnect",)) == ""
+    assert uia.press_button(0, ("Disconnect",)) == ""
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="reads Windows' UDP table")
 def test_udp_table_reads():
     import socket

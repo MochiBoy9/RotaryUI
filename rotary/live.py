@@ -251,25 +251,50 @@ def in_use(kind: str, exclude: tuple[str, ...] = (), running: set[str] | None = 
     return [name for name, _since in in_use_since(kind, exclude, running)]
 
 
-def in_use_since(kind: str, exclude: tuple[str, ...] = (),
-                 running: set[str] | None = None) -> list[tuple[str, float]]:
+_started: dict[int, float] = {}       # pid → when it started (Unix time), 0 if unknown
+
+
+def app_started(exe: str, procs: dict[int, str]) -> float:
+    """When the longest-running copy of an app started (Unix time), or 0 if unknown."""
+    for gone in [p for p in _started if p not in procs]:
+        del _started[gone]
+    times = []
+    for pid, name in procs.items():
+        if name == exe:
+            if pid not in _started:
+                _started[pid] = winapi.process_started(pid)
+            if _started[pid]:
+                times.append(_started[pid])
+    return min(times) if times else 0.0
+
+
+def in_use_since(kind: str, exclude: tuple[str, ...] = (), running: set[str] | None = None,
+                 procs: dict[int, str] | None = None) -> list[tuple[str, float]]:
     """(app, when it started — Unix time) for every app using the microphone / webcam right now. Windows
-    records a start time and a zero stop time while an app holds the device."""
+    records a start time and a zero stop time while an app holds the device. An app that crashed while holding
+    it leaves that behind for good, so an entry only counts while the app is running, and not when it says
+    the app took the device before the running copy was even started (a phantom call "2418 hours" long)."""
     if sys.platform != "win32":
         return []
     import winreg
     found: list[tuple[str, float]] = []
+    if procs is None:
+        procs = winapi.processes()
     if running is None:
-        running = winapi.running_processes()  # a crashed app can leave "still in use" behind
+        running = set(procs.values())
 
-    def check(key, label: str) -> None:
+    def check(key, label: str, exe: str = "") -> None:
         try:
             stop, _ = winreg.QueryValueEx(key, "LastUsedTimeStop")
             start, _ = winreg.QueryValueEx(key, "LastUsedTimeStart")
         except OSError:
             return
         if stop == 0 and start > 0 and label and all(label != n for n, _s in found):
-            found.append((label, start / 1e7 - 11644473600.0))        # FILETIME → Unix time
+            since = start / 1e7 - 11644473600.0                        # FILETIME → Unix time
+            first = app_started(exe, procs) if exe else 0.0
+            if first and since < first - 5:
+                return                                                 # left behind by an earlier copy
+            found.append((label, since))
 
     def walk(path: str, nonpackaged: bool) -> None:
         try:
@@ -290,7 +315,7 @@ def in_use_since(kind: str, exclude: tuple[str, ...] = (),
                         continue
                     label = (Path(full).stem if nonpackaged else sub.split("_")[0].rsplit(".", 1)[-1])
                     with winreg.OpenKey(k, sub) as sk:
-                        check(sk, label)
+                        check(sk, label, Path(full).name.lower() if nonpackaged else "")
         except OSError:
             return
 
@@ -358,8 +383,15 @@ def discord_call(procs: dict[int, str] | None = None) -> float | None:
         if ("--utility-sub-type=network.mojom.networkservice" in cmd or "--type=gpu-process" in cmd
                 or "--type=crashpad-handler" in cmd):
             continue
+        if t:
+            if pid not in _started:
+                _started[pid] = winapi.process_started(pid)
+            t = max(t, _started[pid])       # a socket can't be older than the process holding it
         starts.append(t or time.time())
     return min(starts) if starts else None
+
+
+MAX_CALL_SECONDS = 24 * 3600     # a call that says it started longer ago than this has the time wrong
 
 
 CALL_APPS = {"discord": "Discord", "msteams": "Teams", "ms-teams": "Teams", "teams": "Teams", "zoom": "Zoom",
@@ -812,11 +844,14 @@ class LiveWatcher(QThread):
         # One list of what's running, shared by the checks below (each would take its own).
         procs = await asyncio.to_thread(winapi.processes) if sys.platform == "win32" else {}
         running = set(procs.values()) if sys.platform == "win32" else None
-        mic = await asyncio.to_thread(in_use_since, "microphone", self.exclude, running)
+        mic = await asyncio.to_thread(in_use_since, "microphone", self.exclude, running, procs or None)
         call = None
         if self.opts["calls"]:
             started = await asyncio.to_thread(discord_call, procs)
             call = ("Discord", started) if started else call_from(mic)
+            now = time.time()
+            if call and not now - MAX_CALL_SECONDS < call[1] <= now:
+                call = (call[0], now)           # a start time that can't be right: count from now
             if call and self._call and call[0] == self._call[0]:
                 call = (call[0], min(call[1], self._call[1]))   # a reconnect isn't a new call
         if (call and call[0]) != (self._call and self._call[0]):
