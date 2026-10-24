@@ -834,8 +834,11 @@ class RotaryApp(QObject):
         ox = oy = k = None
         if WIN:
             r = wintypes.RECT()
-            if winapi.user32.GetWindowRect(wintypes.HWND(int(d.winId())), ctypes.byref(r)):
-                ox, oy, k = r.left, r.top, (r.right - r.left) / max(1, d.width())
+            try:
+                if winapi.user32.GetWindowRect(wintypes.HWND(int(d.winId())), ctypes.byref(r)):
+                    ox, oy, k = r.left, r.top, (r.right - r.left) / max(1, d.width())
+            except Exception:          # never let this stop the rotary opening: Qt's geometry below will do
+                log.warning("couldn't read the rotary's window position", exc_info=True)
         if k is None:
             g = d.geometry()
             k = d.devicePixelRatioF() if LINUX else 1.0

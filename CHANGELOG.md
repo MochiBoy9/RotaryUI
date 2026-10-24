@@ -3,9 +3,10 @@
 ## [Unreleased]
 
 ### Fixed
-- **Slides, video and volume rings, and the mouse on a gesture-opened rotary.** Opening the rotary failed half-way
+- **Slides, video and volume rings, and the mouse on the rotary.** Opening the rotary failed half-way
   on Windows (a mismatch in how the rotary's screen position was asked for), so the check for PowerPoint, Google
-  Slides, YouTube, Netflix, VLC and the rest never ran, and the volume ring never appeared. The check also looks
+  Slides, YouTube, Netflix, VLC and the rest never ran, the volume ring never appeared, and the mouse (scroll,
+  drag, click, right-click) never got hold of the ring, however it was opened. The check also looks
   past RotaryUI's own windows now, so opening from the notch or the tray still finds the app underneath.
 - **Pinch.** A touching pinch often read as slightly apart (the camera guesses depth), and the other fingers had to
   be fully open. It's now measured from both the 3D hand and the picture, counts with the other fingers relaxed,
