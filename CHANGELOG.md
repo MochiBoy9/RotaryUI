@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- **The notch on any edge.** Bring the notch to the bottom, left or right edge of the screen (drag it there or
+  throw it) and it hangs from that edge just like it does from the top: slide it along, pull it away to tear it
+  off. It remembers which edge it was on.
+
 ### Fixed
 - **Discord calls in the desktop app.** A Discord crash or update that happened while it held the microphone
   left Windows saying "Discord is using the mic" for good, so RotaryUI showed a Discord call that never ended,
@@ -10,6 +15,9 @@
   counts, a call can't have started before its app did, and a start time over a day old counts from now.
 - **Leave in Discord.** It presses Discord's own *Disconnect* button now, so it works without first giving
   Discord a keybind. The Ctrl + Shift + H keybind is still pressed if the button can't be found.
+- **A free notch couldn't go near the bottom of the screen.** It stopped a few hundred pixels short (most
+  noticeable on 1440p and larger screens). It now goes all the way down, and in the lower half of the screen its
+  cards open upwards so they stay on screen.
 
 ## [2.1.0]
 

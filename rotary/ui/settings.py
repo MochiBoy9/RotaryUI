@@ -1909,13 +1909,14 @@ class NotchPage(QWidget):
         c.add(Row("Show the notch", "Auto: only when there's no camera to use. It never shows up in screenshots "
                                     "or recordings.", self.notch))
         self.peek = Switch(bool(gen.get("notch_peek", False)))
-        c.add(Row("Tuck it away", "Just a thin line until your mouse reaches the top of the screen", self.peek))
+        c.add(Row("Tuck it away", "Just a thin line until your mouse reaches it", self.peek))
         self.fs = Switch(bool(gen.get("notch_hide_fullscreen", True)))
         c.add(Row("Hide during full-screen games and videos", None, self.fs))
         home = QPushButton("Put it back")
         home.clicked.connect(lambda: self.app.notch.go_home())
-        c.add(Row("Where it sits", "Drag the notch along the top, or pull it down until it tears off and put it "
-                                   "anywhere — throw it and it glides. A middle click on it sends it home to the "
+        c.add(Row("Where it sits", "Drag the notch along its edge, or pull it away until it tears off and put it "
+                                   "anywhere — throw it and it glides. Bring it to the top, bottom, left or right "
+                                   "edge and it hangs from that one. A middle click on it sends it home to the "
                                    "middle of the top edge.", home))
         v.addWidget(c)
 

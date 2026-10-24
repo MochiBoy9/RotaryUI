@@ -365,11 +365,22 @@ def test_notch_stretches_then_tears_off_and_merges_back():
     n.hide()
 
 
-def test_thrown_notch_glides_bounces_and_rests_on_screen():
+def _free_notch(n, cx, top):
+    """Float `n` with its body's top middle at (cx, top) on the screen."""
+    n.edge = None
+    n._up = False
+    n._set_pos(cx - n.width() / 2, top - n.FLOAT_PAD * n.s)
+    n._settle_move()
+
+
+def _on_screen(n):
+    return n.body_rect().translated(n.pos().x(), n.pos().y())
+
+
+def test_thrown_notch_glides_then_merges_into_the_edge_it_hits():
     n = _shown_notch()
     sr = n._screen_rect()
-    n.docked = False
-    n._set_pos(*n._clamp_free(sr.center().x() - n.width() / 2, sr.top() + 120, sr))
+    _free_notch(n, sr.center().x(), sr.top() + 120)
     n._vel = QPointF(3000, 900)
     n._moving = True
     moved = []
@@ -379,9 +390,107 @@ def test_thrown_notch_glides_bounces_and_rests_on_screen():
             break
         n._fly(1 / 60)
     assert n._vel is None and not n._moving and moved
-    body_cx = n.pos().x() + n.width() / 2
-    assert sr.left() <= body_cx <= sr.right()
-    assert n.pos().y() + n.height() <= sr.bottom() + 1
+    assert n.edge == "right" and moved[-1]["edge"] == "right"
+    body = _on_screen(n)
+    assert body.right() == pytest.approx(sr.right(), abs=1)         # hanging from the right edge
+    assert sr.top() <= body.center().y() <= sr.bottom()
+    _free_notch(n, sr.center().x(), sr.center().y())
+    n._vel = QPointF(0, 2500)                                      # straight down: joins the bottom edge
+    n._moving = True
+    for _ in range(600):
+        if n._vel is None:
+            break
+        n._fly(1 / 60)
+    assert n.edge == "bottom" and _on_screen(n).bottom() == pytest.approx(sr.bottom(), abs=1)
+    n.hide()
+
+
+def test_free_notch_goes_all_the_way_down_the_screen():
+    """It used to stop well above the bottom of the screen: the whole (tall, mostly empty) window had to fit."""
+    n = _shown_notch()
+    sr = n._screen_rect()
+    _free_notch(n, sr.center().x(), sr.top() + 100)
+    c = _on_screen(n).center()
+    target = sr.bottom() - n.DOCK_SNAP * n.s - 20                 # just clear of the bottom edge
+    _drag(n, [c, c + QPointF(0, 10), QPointF(c.x(), target)], release=False)
+    assert n.edge is None
+    assert _on_screen(n).center().y() == pytest.approx(target, abs=2)
+    n.mouseReleaseEvent(_Mouse(QPointF(c.x(), target)))
+    _settle(n)
+    assert n._up                                                   # in the bottom half: it grows upwards
+    bottom = _on_screen(n).bottom()
+    n.h_s.snap(n.MEDIA_CARD[1] * n.s)                              # a card opens: up, not off the screen
+    assert _on_screen(n).bottom() == pytest.approx(bottom, abs=1) and _on_screen(n).top() >= sr.top()
+    n._settle_move()
+    saved = n.position
+    assert saved["docked"] is False and saved["up"] is True and saved["y"] == pytest.approx(bottom, abs=1)
+    n.hide()
+
+
+@pytest.mark.parametrize("edge", ["bottom", "left", "right"])
+def test_notch_docks_on_any_edge_slides_along_it_and_tears_off(edge):
+    n = _shown_notch()
+    sr = n._screen_rect()
+    _free_notch(n, sr.center().x(), sr.center().y() - 15)
+    c = _on_screen(n).center()
+    to = {"bottom": QPointF(c.x(), sr.bottom() - 10), "left": QPointF(sr.left() + 60, c.y()),
+          "right": QPointF(sr.right() - 60, c.y())}[edge]
+    _drag(n, [c, c + (to - c) * 0.1, to], release=False)
+    assert n.edge == edge                                          # brought near the edge: merged into it
+    body = _on_screen(n)
+    w, h = n.width(), n.height()
+    assert n._hanging(n.body_rect())
+    if edge == "bottom":
+        assert body.bottom() == pytest.approx(sr.bottom(), abs=1) and n.pos().y() == int(sr.bottom() - h)
+    elif edge == "left":
+        assert body.left() == pytest.approx(sr.left(), abs=1) and n.pos().x() == int(sr.left())
+    else:
+        assert body.right() == pytest.approx(sr.right(), abs=1) and n.pos().x() == int(sr.right() - w)
+    path = n._body_path(n.body_rect(), 13).boundingRect().translated(n.pos().x(), n.pos().y())
+    assert sr.adjusted(-30, -30, 30, 30).contains(path)              # the part past the edge is off screen only
+    n.mouseReleaseEvent(_Mouse(to))
+    n._settle_move()
+    saved = n.position
+    assert saved["docked"] is True and saved["edge"] == edge
+
+    # slide along the edge
+    start = _on_screen(n).center()
+    along = QPointF(-60, 0) if edge == "bottom" else QPointF(0, -60)
+    _drag(n, [start, start + along * 0.2, start + along])
+    n._vel = None
+    n._settle_move()
+    assert n.edge == edge
+    moved = _on_screen(n).center() - start
+    assert moved.x() == pytest.approx(along.x(), abs=2) and moved.y() == pytest.approx(along.y(), abs=2)
+
+    # pull away a little: it stretches; further, it tears off
+    start = _on_screen(n).center()
+    away = {"bottom": QPointF(0, -1), "left": QPointF(1, 0), "right": QPointF(-1, 0)}[edge]
+    _drag(n, [start, start + away * 30], release=False)
+    assert n.edge == edge and n.pull.value > 10 and n._stretch() > 0
+    assert not n._hanging(n.body_rect())
+    n.mouseMoveEvent(_Mouse(start + away * 200))
+    assert n.edge is None                                          # torn off
+    n.mouseReleaseEvent(_Mouse(start + away * 200))
+    n.hide()
+
+
+def test_saved_edge_is_restored():
+    n = NotchWindow()
+    sr = n._screen_rect()
+    n.set_position({"docked": True, "edge": "left", "x": sr.left(), "y": sr.top() + 300})
+    n.show()
+    n.place()
+    _settle(n)
+    assert n.edge == "left" and n.pos().x() == int(sr.left())
+    assert n.pos().y() + n.height() / 2 == pytest.approx(sr.top() + 300, abs=1)
+    n.set_position({"docked": True, "edge": "sideways", "x": sr.left() + 200, "y": sr.top()})
+    n.place()
+    assert n.edge == "top"                                         # junk edge: the top
+    n.set_position({"docked": False, "x": sr.left() + 300, "y": sr.bottom() - 40, "up": True})
+    n.place()
+    assert n.edge is None and n._up
+    assert _on_screen(n).bottom() == pytest.approx(sr.bottom() - 40, abs=1)
     n.hide()
 
 
@@ -415,8 +524,7 @@ def test_saved_position_is_restored():
     n.place()
     assert not n.docked
     assert n.pos().x() + n.width() / 2 == pytest.approx(sr.left() + 300, abs=1)
-    assert n.body_rect().top() + n.pos().y() == pytest.approx(min(sr.top() + 150, sr.bottom() - n.height()
-                                                                  + n.FLOAT_PAD * n.s), abs=1)
+    assert n.body_rect().top() + n.pos().y() == pytest.approx(sr.top() + 150, abs=1)
     n.set_position({"x": "nonsense"})                     # junk in config.json: back home
     n.place()
     assert n.docked
