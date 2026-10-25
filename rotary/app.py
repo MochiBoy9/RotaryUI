@@ -515,8 +515,9 @@ class RotaryApp(QObject):
             show_window = (not onboarded) or not self.cfg.get("general", {}).get("start_minimized", True)
         if show_window:
             self.show_window()
-        else:
+        elif self._keep_in_taskbar():
             self.window.showMinimized()   # lives on the taskbar
+        # otherwise it starts in the tray: the rotary works without the window
         if onboarded and not self.cfg.get("general", {}).get("tutorial_done", False):
             QTimer.singleShot(1500, self.start_tutorial)     # quit half-way through last time: pick it up again
         QTimer.singleShot(2500, self.dial.prewarm)
@@ -530,6 +531,33 @@ class RotaryApp(QObject):
         self.window.showNormal()
         self.window.raise_()
         self.window.activateWindow()
+
+    def _keep_in_taskbar(self) -> bool:
+        """Closing the window minimises it to the taskbar instead of hiding it in the tray. Without a tray to
+        come back from (some Linux desktops) it always stays on the taskbar."""
+        return bool(self.cfg.get("general", {}).get("keep_in_taskbar", False)) or \
+            not QSystemTrayIcon.isSystemTrayAvailable()
+
+    def window_closed(self) -> None:
+        """The window's close button: RotaryUI keeps running, so the rotary, the notch, the camera gestures and
+        the shortcuts keep working. Quit from the tray menu stops it."""
+        if self._keep_in_taskbar():
+            self.window.showMinimized()
+        else:
+            self.window.hide()
+        gen = self.cfg.setdefault("general", {})
+        if gen.get("close_hint_shown", False):
+            return
+        gen["close_hint_shown"] = True
+        self._save_timer.start()
+        where = "on the taskbar" if self._keep_in_taskbar() else "in the menu bar" if sys.platform == "darwin" \
+            else "in the system tray"
+        text = f"RotaryUI is still running {where}, so the rotary keeps working. Quit it from the tray icon's menu."
+        if QSystemTrayIcon.supportsMessages() and self.tray.isVisible():
+            self.tray.showMessage("RotaryUI keeps running", text, tray_icon(True), 6000)
+        else:
+            self._flash_msg("Still running · the rotary keeps working", "dot", BLUE, 4.0)
+        log.info("window closed; still running in the background")
 
     # ------------------------------------------------------------ first-run tour
     def start_tutorial(self) -> None:
@@ -577,7 +605,7 @@ class RotaryApp(QObject):
         self.pause_action.setEnabled(self.camera_on)
         m.addAction(self.pause_action)
         m.addSeparator()
-        m.addAction("Quit", self.quit)
+        m.addAction("Quit RotaryUI", self.quit)
         self.tray.setContextMenu(m)
         self.tray.activated.connect(lambda r: self.show_window()
                                     if r in (QSystemTrayIcon.ActivationReason.Trigger,

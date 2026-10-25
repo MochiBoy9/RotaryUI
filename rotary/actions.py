@@ -38,7 +38,7 @@ from .winapi import parse_keys, press_keys  # noqa: F401  (re-exported for calle
 
 log = logging.getLogger(__name__)
 CONFIG_PATH = DATA_DIR / "config.json"
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 ACTION_TYPES = {
@@ -142,7 +142,8 @@ DEFAULT_CONFIG = {
         "weather_place": "",     # where, for the weather ('' = worked out from the internet address)
     },
     "general": {
-        "keep_in_taskbar": True,
+        "keep_in_taskbar": False,    # closing the window hides it to the tray; the rotary keeps working
+        "close_hint_shown": False,   # told once that closing the window leaves RotaryUI running
         "start_minimized": True,
         "onboarded": False,
         "tutorial_done": False,      # the first-run tour has been finished or skipped (Home replays it)
@@ -264,6 +265,8 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
     ap = cfg.get("appearance") or {}
     if int(data.get("version", 0) or 0) < 3 and ap.get("dial_size") == 600:
         ap["dial_size"] = 540                       # the old default: the rotary is a little smaller now
+    if int(data.get("version", 0) or 0) < 4:
+        cfg["general"]["keep_in_taskbar"] = False   # 2.2.3: closing the window goes to the tray, not the taskbar
     cfg["version"] = CONFIG_VERSION
     return cfg
 

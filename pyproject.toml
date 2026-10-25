@@ -1,6 +1,6 @@
 [project]
 name = "gesture-rotary"
-version = "2.2.2"
+version = "2.2.3"
 description = "Gesture-controlled rotary launcher driven by any webcam, or a notch at the top of the screen"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.txt", "licenses/*.txt"]
