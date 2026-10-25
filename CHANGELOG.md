@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.3]
+
+### Changed
+- **The rotary keeps working with the window closed.** Closing the RotaryUI window now tucks it away in the
+  system tray (the menu bar on macOS) instead of leaving it minimised on the taskbar. RotaryUI keeps running in
+  the background, so the camera gestures, the keyboard shortcut, the notch and the mouse buttons still open the
+  rotary. The first time you close it, a note says where it went. Open the window again from the tray icon, and
+  stop RotaryUI with **Quit RotaryUI** in the tray menu. Prefer the old way? Turn on *General → Keep on the
+  taskbar when closed*. Starting minimised also starts in the tray now.
+
 ## [2.2.2]
 
 ### Added

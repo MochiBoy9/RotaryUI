@@ -2,7 +2,8 @@
 
 Pages: Welcome (first run), Rotary (items + live preview), Apps (integrations & Quick nav),
 Controls (gestures), Accessibility, Camera, General. Every change applies immediately and is
-saved to config.json. The window lives on the taskbar: closing it minimises instead of quitting."""
+saved to config.json. Closing the window leaves RotaryUI running in the tray (or minimised on the taskbar),
+so the rotary, the notch and the shortcuts keep working; Quit in the tray menu stops it."""
 from __future__ import annotations
 
 import copy
@@ -2537,12 +2538,13 @@ class GeneralPage(QWidget):
         self.minimized.toggled.connect(lambda on: self.set("general", "start_minimized", on))
         c.add(Row("Start minimised", "Open quietly on the taskbar" if WIN else "Open quietly in the background",
                   self.minimized))
-        self.taskbar = Switch(gen.get("keep_in_taskbar", True))
+        self.taskbar = Switch(gen.get("keep_in_taskbar", False))
         self.taskbar.toggled.connect(lambda on: self.set("general", "keep_in_taskbar", on))
         c.add(Row("Keep on the taskbar when closed" if WIN else "Keep in the Dock when closed" if MAC else
                   "Keep in the taskbar when closed",
-                  "Otherwise closing hides it to the system tray" if not MAC else "Otherwise closing hides it to "
-                  "the menu bar", self.taskbar))
+                  "Otherwise closing hides it to the system tray. The rotary keeps working either way"
+                  if not MAC else "Otherwise closing hides it to the menu bar. The rotary keeps working either way",
+                  self.taskbar))
         v.addWidget(c)
 
         c = Card("Appearance")
@@ -3379,7 +3381,4 @@ class MainWindow(QWidget):
             e.accept()
             return
         e.ignore()
-        if self.app.cfg.get("general", {}).get("keep_in_taskbar", True):
-            self.showMinimized()
-        else:
-            self.hide()
+        self.app.window_closed()
