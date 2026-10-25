@@ -65,7 +65,9 @@ def key_label(k: str) -> str:
         mods = sorted((p for p in parts[:-1] if p in order), key=order.get)
         last = parts[-1]
         return "".join(MAC_SYMBOLS[m] for m in mods) + MAC_SYMBOLS.get(last, last.upper())
-    return "+".join(p.upper() if len(p) <= 3 and p not in ("ctrl", "alt", "win") else p.title() for p in parts)
+    names = {"pageup": "PgUp", "pagedown": "PgDn"}
+    return "+".join(names.get(p) or (p.upper() if len(p) <= 3 and p not in ("ctrl", "alt", "win") else p.title())
+                    for p in parts)
 
 
 def user_config(*parts: str) -> str:
@@ -288,7 +290,10 @@ def vscode_recents(storage: Path, limit: int = 8) -> list[tuple[str, str]]:
 
 
 def _code_like(a: App) -> list[dict]:
-    return [a.open_item(), a.it("New window", "Empty window", "E8A7", a.launch("--new-window"), icon="")]
+    palette, term = shortcut("ctrl+shift+p"), shortcut("ctrl+`", "ctrl+`")
+    return [a.open_item(), a.it("New window", "Empty window", "E8A7", a.launch("--new-window"), icon=""),
+            a.it("Command palette", key_label(palette), "E721", a.keys(palette, restore=False), icon=""),
+            a.it("Terminal", f"Show / hide · {key_label(term)}", "E756", a.keys(term, restore=False), icon="")]
 
 
 def _code_recents(a: App, cfg: dict) -> list[dict]:
@@ -367,6 +372,58 @@ def _jump(label: str, k: str) -> Callable:
         sub = f"Shortcut {key_label(sk)}" if MAC else f"Shortcut {k.replace('+', ' + ').title()}"
         return [a.open_item(), a.it(label, sub, "E721", a.keys(sk, restore=False), icon="")]
     return build
+
+
+def _keyset(*rows: tuple) -> Callable:
+    """Open, then one item per (name, glyph, shortcut[, Mac shortcut]) pressed inside the app, which stays in
+    front: these are for while you work in it (CAD views, run / debug, upload…)."""
+    def build(a: App) -> list[dict]:
+        out = [a.open_item()]
+        for name, glyph, k, *mac in rows:
+            sk = shortcut(k, mac[0] if mac else None)
+            out.append(a.it(name, f"{a.name}'s {key_label(sk)}", glyph, a.keys(sk, restore=False), icon=""))
+        return out
+    return build
+
+
+# SOLIDWORKS' default shortcuts (Tools → Customize → Keyboard).
+_solidworks = _keyset(("Rebuild", "E72C", "ctrl+b"), ("Zoom to fit", "E80F", "f"),
+                      ("View orientation", "E7C4", "space"), ("Isometric", "E7C4", "ctrl+7"),
+                      ("Front view", "E7C4", "ctrl+1"), ("Top view", "E7C4", "ctrl+5"),
+                      ("Normal to", "E7C4", "ctrl+8"), ("Save", "E74E", "ctrl+s"))
+_fusion = _keyset(("Search commands", "E721", "s"), ("Fit view", "E80F", "f6"), ("Measure", "E8EF", "i"),
+                  ("Extrude", "E70F", "e"), ("Sketch dimension", "E70F", "d"))
+_autocad = _keyset(("Object snap", "E8AB", "f3"), ("Grid", "E8AB", "f7"), ("Ortho", "E8AB", "f8"),
+                   ("Polar tracking", "E8AB", "f10"), ("Dynamic input", "E8AB", "f12"))
+_inventor = _keyset(("Home view", "E80F", "f6"), ("Zoom all", "E7C4", "home"), ("Look at", "E7C4", "pageup"),
+                    ("Previous view", "E72B", "f5"))
+_jetbrains = _keyset(("Run", "E768", "shift+f10", "ctrl+r"), ("Debug", "E90F", "shift+f9", "ctrl+d"),
+                     ("Stop", "E71A", "ctrl+f2"), ("Find action", "E721", "ctrl+shift+a"))
+_arduino = _keyset(("Verify", "E73E", "ctrl+r"), ("Upload", "E945", "ctrl+u"),
+                   ("Serial monitor", "E756", "ctrl+shift+m"))
+_matlab = _keyset(("Run", "E768", "f5"))
+_wireshark = _keyset(("Start / stop capture", "E7C8", "ctrl+e"), ("Find packet", "E721", "ctrl+f"))
+_blender = _keyset(("Render image", "E722", "f12"), ("Play animation", "E768", "space"), ("Save", "E74E", "ctrl+s"))
+_editor = _keyset(("Play / Pause", "E768", "space"), ("Export", "E74E", "ctrl+m"))
+_audacity = _keyset(("Record", "E7C8", "r"), ("Play / Stop", "E768", "space"))
+_unreal = _keyset(("Play in editor", "E768", "alt+p"), ("Save all", "E74E", "ctrl+shift+s"))
+
+
+def _medal(a: App) -> list[dict]:
+    """Medal listens for its clip key everywhere, so it's pressed where you are (in the game), not in Medal."""
+    from .live import _medal_folder
+    return [a.open_item(),
+            a.it("Clip that", "Medal's F8 (its default clip key)", "E7C8", keys("f8"), tint="#FF453A", icon=""),
+            a.it("Your clips", "Medal's clip folder", "E8B7", open_uri(str(_medal_folder())), icon="")]
+
+
+def _nvidia(a: App) -> list[dict]:
+    t = a.spec.tint
+    return [a.open_item(),
+            item("Save replay", "Instant Replay · Alt+Shift+F10", "E74E", t, keys("alt+shift+f10")),
+            item("Record", "Start / stop · Alt+F9", "E7C8", t, keys("alt+f9")),
+            item("Screenshot", "Alt+F1", "E722", t, keys("alt+f1")),
+            item("Overlay", "Alt+Z", "E7FC", t, keys("alt+z"))]
 
 
 def _roblox_studio(a: App) -> list[dict]:
@@ -474,6 +531,13 @@ _ALL: list[Spec] = [
     Spec("roblox_studio", "Roblox Studio", "Creative", "E70F", "#00A2FF", ("Roblox Studio",),
          (rf"{LAD}\Roblox\Versions\*\RobloxStudioBeta.exe",), "RobloxStudioBeta.exe",
          blurb="Open Studio, play-test and stop.", actions=_roblox_studio, mac=("RobloxStudio",)),
+    Spec("medal", "Medal", "Gaming", "E7C8", "#FFB800", ("Medal",),
+         (rf"{LAD}\Medal\app-*\Medal.exe", rf"{LAD}\Medal\Medal.exe"), "Medal.exe",
+         blurb="Clip the last moments of a game (Medal's clip key) and open your clips.", actions=_medal,
+         systems="win32"),
+    Spec("nvidia", "NVIDIA app", "Gaming", "E7FC", "#76B900", ("NVIDIA app", "GeForce Experience"),
+         blurb="Save an Instant Replay, record, screenshot and the overlay (its default shortcuts).",
+         actions=_nvidia, systems="win32"),
     Spec("gamebar", "Xbox Game Bar", "Gaming", "E7FC", "#107C10", builtin=True,
          blurb="Record clips, screenshots and the Game Bar overlay.", actions=_gamebar, systems="win32"),
     # ---- creative & streaming
@@ -484,13 +548,30 @@ _ALL: list[Spec] = [
                "is closed; turn on Tools → WebSocket Server Settings for control while it's open.",
          actions=_obs, dynamic=_obs_scenes, mac=("OBS",)),
     Spec("blender", "Blender", "Creative", "E70F", "#F5792A", ("Blender",),
-         (rf"{PF}\Blender Foundation\Blender*\blender.exe",), "blender.exe", actions=_simple),
+         (rf"{PF}\Blender Foundation\Blender*\blender.exe",), "blender.exe", actions=_blender),
     Spec("photoshop", "Photoshop", "Creative", "E70F", "#31A8FF", ("Adobe Photoshop",),
          (rf"{PF}\Adobe\Adobe Photoshop*\Photoshop.exe",), "Photoshop.exe", actions=_simple),
+    Spec("illustrator", "Illustrator", "Creative", "E70F", "#FF9A00", ("Adobe Illustrator",),
+         (rf"{PF}\Adobe\Adobe Illustrator*\Support Files\Contents\Windows\Illustrator.exe",), "Illustrator.exe",
+         actions=_simple),
+    Spec("after_effects", "After Effects", "Creative", "E714", "#9999FF", ("Adobe After Effects",),
+         (rf"{PF}\Adobe\Adobe After Effects*\Support Files\AfterFX.exe",), "AfterFX.exe", actions=_simple),
     Spec("premiere", "Premiere Pro", "Creative", "E714", "#9999FF", ("Adobe Premiere Pro",),
-         (rf"{PF}\Adobe\Adobe Premiere Pro*\Adobe Premiere Pro.exe",), "Adobe Premiere Pro.exe", actions=_simple),
+         (rf"{PF}\Adobe\Adobe Premiere Pro*\Adobe Premiere Pro.exe",), "Adobe Premiere Pro.exe", actions=_editor),
     Spec("resolve", "DaVinci Resolve", "Creative", "E714", "#E0533E", ("DaVinci Resolve",),
-         (rf"{PF}\Blackmagic Design\DaVinci Resolve\Resolve.exe",), "Resolve.exe", actions=_simple),
+         (rf"{PF}\Blackmagic Design\DaVinci Resolve\Resolve.exe",), "Resolve.exe",
+         actions=_keyset(("Play / Pause", "E768", "space"))),
+    Spec("capcut", "CapCut", "Creative", "E714", "#6E6E78", ("CapCut",), (rf"{LAD}\CapCut\Apps\CapCut.exe",),
+         "CapCut.exe", actions=_simple),
+    Spec("gimp", "GIMP", "Creative", "E70F", "#7D6F5A", ("GIMP",), (rf"{PF}\GIMP *\bin\gimp-*.exe",),
+         actions=_simple),
+    Spec("krita", "Krita", "Creative", "E70F", "#3BABFF", ("Krita",), (rf"{PF}\Krita (x64)\bin\krita.exe",),
+         "krita.exe", actions=_simple),
+    Spec("audacity", "Audacity", "Creative", "E720", "#0000CC", ("Audacity",), (rf"{PF}\Audacity\Audacity.exe",),
+         "Audacity.exe", actions=_audacity),
+    Spec("unreal", "Unreal Engine", "Creative", "E7FC", "#6E6E78", ("Unreal Engine",),
+         (rf"{PF}\Epic Games\UE_*\Engine\Binaries\Win64\UnrealEditor.exe",), "UnrealEditor.exe",
+         actions=_unreal, systems="win32"),
     Spec("figma", "Figma", "Creative", "E70F", "#A259FF", ("Figma",), (rf"{LAD}\Figma\Figma.exe",), "Figma.exe",
          actions=_simple),
     Spec("unity_hub", "Unity Hub", "Creative", "E7FC", "#6E6E78", ("Unity Hub",),
@@ -528,8 +609,62 @@ _ALL: list[Spec] = [
          (rf"{LAD}\GitHubDesktop\GitHubDesktop.exe",), "GitHubDesktop.exe", actions=_simple),
     Spec("terminal", "Terminal", "Code & AI", "E756", "#30D158", ("Terminal", "Windows Terminal"), (),
          "WindowsTerminal.exe", actions=_simple),
+    Spec("windsurf", "Windsurf", "Code & AI", "E943", "#0B9D8C", ("Windsurf",),
+         (rf"{LAD}\Programs\Windsurf\Windsurf.exe",), "Windsurf.exe", actions=_code_like, dynamic=_code_recents,
+         extra={"storage": user_config("Windsurf", "User", "globalStorage")}),
+    Spec("intellij", "IntelliJ IDEA", "Code & AI", "E943", "#FE315D",
+         ("IntelliJ IDEA", "IntelliJ IDEA Ultimate", "IntelliJ IDEA Community Edition"),
+         (rf"{PF}\JetBrains\IntelliJ IDEA*\bin\idea64.exe",), "idea64.exe",
+         blurb="Run, debug, stop and Find action.", actions=_jetbrains, mac=("IntelliJ IDEA CE",)),
+    Spec("pycharm", "PyCharm", "Code & AI", "E943", "#21D789",
+         ("PyCharm", "PyCharm Community Edition", "PyCharm Professional Edition"),
+         (rf"{PF}\JetBrains\PyCharm*\bin\pycharm64.exe",), "pycharm64.exe",
+         blurb="Run, debug, stop and Find action.", actions=_jetbrains, mac=("PyCharm CE",)),
+    Spec("android_studio", "Android Studio", "Code & AI", "E943", "#3DDC84", ("Android Studio",),
+         (rf"{PF}\Android\Android Studio\bin\studio64.exe",), "studio64.exe", actions=_jetbrains),
+    Spec("postman", "Postman", "Code & AI", "E909", "#FF6C37", ("Postman",), (rf"{LAD}\Postman\Postman.exe",),
+         "Postman.exe", actions=_simple),
+    Spec("wireshark", "Wireshark", "Code & AI", "E909", "#1679A7", ("Wireshark",),
+         (rf"{PF}\Wireshark\Wireshark.exe",), "Wireshark.exe", actions=_wireshark),
     Spec("docker", "Docker Desktop", "Code & AI", "E943", "#1D63ED", ("Docker Desktop",),
          (rf"{PF}\Docker\Docker\Docker Desktop.exe",), "Docker Desktop.exe", actions=_simple, mac=("Docker",)),
+    # ---- engineering: CAD, electronics, maths
+    Spec("solidworks", "SOLIDWORKS", "Engineering", "E70F", "#E2231A", ("SOLIDWORKS",),
+         (rf"{PF}\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe",), "SLDWORKS.exe",
+         blurb="Rebuild, zoom to fit, the view orientation menu, standard views and save (its default shortcuts).",
+         actions=_solidworks, systems="win32"),
+    Spec("fusion", "Autodesk Fusion", "Engineering", "E70F", "#F37021",
+         ("Autodesk Fusion", "Autodesk Fusion 360", "Fusion 360"),
+         (rf"{LAD}\Autodesk\webdeploy\production\*\Fusion360.exe",), "Fusion360.exe",
+         blurb="Command search, fit view, measure, extrude and sketch dimension.", actions=_fusion,
+         systems="win32 darwin"),
+    Spec("autocad", "AutoCAD", "Engineering", "E70F", "#E51050", ("AutoCAD",),
+         (rf"{PF}\Autodesk\AutoCAD *\acad.exe",), "acad.exe",
+         blurb="Object snap, grid, ortho, polar tracking and dynamic input on / off.", actions=_autocad,
+         systems="win32"),
+    Spec("inventor", "Inventor", "Engineering", "E70F", "#F0A30A",
+         ("Autodesk Inventor Professional", "Autodesk Inventor"), (rf"{PF}\Autodesk\Inventor *\Bin\Inventor.exe",),
+         "Inventor.exe", actions=_inventor, systems="win32"),
+    Spec("revit", "Revit", "Engineering", "E70F", "#186BFF", ("Revit", "Autodesk Revit"),
+         (rf"{PF}\Autodesk\Revit *\Revit.exe",), "Revit.exe", actions=_simple, systems="win32"),
+    Spec("rhino", "Rhino", "Engineering", "E70F", "#801010", ("Rhino", "Rhinoceros"),
+         (rf"{PF}\Rhino *\System\Rhino.exe",), "Rhino.exe", actions=_simple, mac=("Rhino 8", "Rhino 7")),
+    Spec("sketchup", "SketchUp", "Engineering", "E70F", "#005F9E", ("SketchUp",),
+         (rf"{PF}\SketchUp\SketchUp *\SketchUp.exe",), "SketchUp.exe", actions=_simple),
+    Spec("freecad", "FreeCAD", "Engineering", "E70F", "#CB333B", ("FreeCAD",), (rf"{PF}\FreeCAD *\bin\freecad.exe",),
+         "freecad.exe", actions=_simple),
+    Spec("kicad", "KiCad", "Engineering", "E945", "#314CB0", ("KiCad",), (rf"{PF}\KiCad\*\bin\kicad.exe",),
+         "kicad.exe", actions=_simple),
+    Spec("altium", "Altium Designer", "Engineering", "E945", "#A5915F", ("Altium Designer",),
+         (rf"{PF}\Altium\AD*\X2.EXE",), "X2.EXE", actions=_simple, systems="win32"),
+    Spec("ltspice", "LTspice", "Engineering", "E945", "#1E5AA8", ("LTspice", "LTspice XVII"),
+         (rf"{LAD}\Programs\ADI\LTspice\LTspice.exe", rf"{PF}\ADI\LTspice\LTspice.exe"), "LTspice.exe",
+         actions=_simple),
+    Spec("arduino", "Arduino IDE", "Engineering", "E945", "#00979D", ("Arduino IDE",),
+         (rf"{LAD}\Programs\Arduino IDE\Arduino IDE.exe", rf"{PF}\Arduino IDE\Arduino IDE.exe"),
+         "Arduino IDE.exe", blurb="Verify, upload and the serial monitor.", actions=_arduino),
+    Spec("matlab", "MATLAB", "Engineering", "E8EF", "#E16737", ("MATLAB",), (rf"{PF}\MATLAB\R*\bin\matlab.exe",),
+         "MATLAB.exe", blurb="Run the script in the editor.", actions=_matlab),
     # ---- browsers
     Spec("chrome", "Google Chrome", "Browsers", "E774", "#4285F4", ("Google Chrome",),
          (rf"{PF}\Google\Chrome\Application\chrome.exe", rf"{PF86}\Google\Chrome\Application\chrome.exe",
@@ -568,6 +703,10 @@ _ALL: list[Spec] = [
          mac=("Microsoft Excel",)),
     Spec("powerpoint", "PowerPoint", "Productivity", "E8A5", "#D24726", ("PowerPoint",), (), "POWERPNT.EXE",
          actions=_simple, mac=("Microsoft PowerPoint",)),
+    Spec("onenote", "OneNote", "Productivity", "E8A5", "#7719AA", ("OneNote",), (), "ONENOTE.EXE", actions=_simple,
+         mac=("Microsoft OneNote",)),
+    Spec("zotero", "Zotero", "Productivity", "E8A5", "#CC2936", ("Zotero",), (rf"{PF}\Zotero\zotero.exe",),
+         "zotero.exe", actions=_simple),
     Spec("outlook", "Outlook", "Productivity", "E715", "#0078D4", ("Outlook", "Outlook (new)"), (), "olk.exe",
          actions=_simple, mac=("Microsoft Outlook",)),
     # ---- the operating system
@@ -585,7 +724,7 @@ _ALL: list[Spec] = [
 # Only what exists on this system (Windows' Game Bar has no place on a Mac).
 CATALOG: list[Spec] = [s for s in _ALL if ("linux" if LINUX else sys.platform) in s.systems.split()]
 BY_ID = {s.id: s for s in CATALOG}
-CATEGORIES = ["Gaming", "Chat", "Creative", "Code & AI", "Browsers", "Media", "Productivity", OS_NAME]
+CATEGORIES = ["Gaming", "Chat", "Creative", "Code & AI", "Engineering", "Browsers", "Media", "Productivity", OS_NAME]
 
 
 # =========================================================================== detection
@@ -733,7 +872,9 @@ def quicknav_item(app_id: str) -> dict:
     a = get(app_id)
     spec = BY_ID[app_id]
     sub = {"steam": "Your games & more", "obs": "Record, stream, scenes", "vscode": "Recent projects",
-           "cursor": "Recent projects", "discord": "Mute, deafen, DMs"}.get(app_id, "Quick nav")
+           "cursor": "Recent projects", "windsurf": "Recent projects", "discord": "Mute, deafen, DMs",
+           "medal": "Clip, your clips", "solidworks": "Rebuild & views", "fusion": "Search, fit, measure",
+           "arduino": "Verify & upload", "intellij": "Run & debug", "pycharm": "Run & debug"}.get(app_id, "Quick nav")
     return item(spec.name, sub, spec.glyph, spec.tint, {"type": "quicknav", "app": app_id}, a.icon if a else "")
 
 
@@ -746,7 +887,7 @@ def status_line(app_id: str) -> str:
     plain = f"{acts} action{'s' if acts != 1 else ''}"
     if app_id == "steam" and n:
         return f"{n} game{'s' if n != 1 else ''} · {plain}"
-    if app_id in ("vscode", "cursor") and n:
+    if app_id in ("vscode", "cursor", "windsurf") and n:
         return f"{n} recent project{'s' if n != 1 else ''} · {plain}"
     if app_id == "obs":
         return f"{n} scene{'s' if n != 1 else ''} · {plain}" if n else f"{plain} · scenes appear while OBS is open"
@@ -756,6 +897,6 @@ def status_line(app_id: str) -> str:
 def suggested_quicknav(limit: int = 4) -> list[str]:
     """Installed apps worth a Quick nav slot by default, best first."""
     order = ["discord", "steam", "obs", "spotify", "vscode", "claude", "cursor", "roblox_studio", "chrome", "teams",
-             "zoom", "slack"]
+             "zoom", "slack", "medal", "solidworks", "fusion", "pycharm", "intellij", "arduino"]
     have = {a.id for a in installed()}
     return [i for i in order if i in have][:limit]

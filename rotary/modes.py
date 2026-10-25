@@ -48,11 +48,12 @@ SLIDE_APPS = {
     "powerpnt": "PowerPoint", "microsoft powerpoint": "PowerPoint", "keynote": "Keynote",
     "soffice.bin": "Impress", "simpress": "Impress", "libreoffice": "Impress", "wpp": "WPS Presentation",
     "wpspresentation": "WPS Presentation", "prezi": "Prezi", "pitch": "Pitch", "pdfpc": "pdfpc",
-    "impressive": "Impressive", "onlyoffice": "ONLYOFFICE",
+    "impressive": "Impressive", "onlyoffice": "ONLYOFFICE", "pympress": "Pympress",
 }
 # Slideshow sites, told apart by the browser tab's title.
 SLIDE_SITES = (("Google Slides", "Google Slides"), ("PowerPoint", "PowerPoint"), ("Keynote", "Keynote"),
-               ("Pitch", "Pitch"), ("Prezi", "Prezi"), ("Gamma", "Gamma"))
+               ("Pitch", "Pitch"), ("Prezi", "Prezi"), ("Gamma", "Gamma"), ("Zoho Show", "Zoho Show"),
+               ("Beautiful.ai", "Beautiful.ai"))
 SLIDE_NEEDS_TITLE = {"soffice.bin", "libreoffice", "onlyoffice"}     # these also open documents, sheets…
 
 VIDEO_APPS = {
@@ -65,13 +66,21 @@ VIDEO_APPS = {
     "quicktime player": "QuickTime Player", "tv": "TV", "infuse": "Infuse", "elmedia player": "Elmedia",
     "jellyfin media player": "Jellyfin", "stremio": "Stremio", "gom": "GOM Player", "5kplayer": "5KPlayer",
     "showtime": "Videos", "clapper": "Clapper", "mediaplayer": "Media Player", "applemedia": "TV",
+    "freetube": "FreeTube", "mpvnet": "mpv.net", "mpc-qt": "MPC-QT", "jellyfinmediaplayer": "Jellyfin",
+    "bsplayer": "BS.Player",
 }
 VIDEO_TITLES = (("YouTube", "YouTube"), ("Netflix", "Netflix"), ("Hulu", "Hulu"), ("Disney+", "Disney+"),
                 ("Prime Video", "Prime Video"), ("Twitch", "Twitch"), ("Vimeo", "Vimeo"), ("Crunchyroll", "Crunchyroll"),
                 ("Peacock", "Peacock"), ("Paramount+", "Paramount+"), ("Apple TV", "Apple TV"), ("Max", "Max"),
                 ("Plex", "Plex"), ("Jellyfin", "Jellyfin"), ("Dailymotion", "Dailymotion"), ("Kick", "Kick"),
                 ("Tubi", "Tubi"), ("Pluto TV", "Pluto TV"), ("Bilibili", "Bilibili"), ("Rumble", "Rumble"),
-                ("Nebula", "Nebula"), ("Stan", "Stan"), ("BBC iPlayer", "BBC iPlayer"), ("Mubi", "MUBI"))
+                ("Nebula", "Nebula"), ("Stan", "Stan"), ("BBC iPlayer", "BBC iPlayer"), ("Mubi", "MUBI"),
+                # Courses and lectures: the ones people scrub back through most.
+                ("Coursera", "Coursera"), ("Udemy", "Udemy"), ("Khan Academy", "Khan Academy"), ("edX", "edX"),
+                ("LinkedIn Learning", "LinkedIn Learning"), ("Pluralsight", "Pluralsight"),
+                ("Skillshare", "Skillshare"), ("MasterClass", "MasterClass"), ("Panopto", "Panopto"),
+                ("Microsoft Stream", "Stream"), ("Loom", "Loom"), ("TED", "TED"), ("Odysee", "Odysee"),
+                ("ESPN", "ESPN"), ("discovery+", "discovery+"))
 
 
 def _norm(exe: str) -> str:
@@ -265,7 +274,8 @@ def step_slides(delta: int) -> None:
 SEEK_KEYS = {"VLC": ("alt+right", "alt+left", 10.0), "mpv": ("right", "left", 5.0),
              "YouTube": ("right", "left", 5.0), "MPC-HC": ("right", "left", 5.0), "MPC-BE": ("right", "left", 5.0),
              "PotPlayer": ("right", "left", 5.0), "QuickTime Player": ("right", "left", 1.0),
-             "IINA": ("right", "left", 5.0), "Twitch": ("right", "left", 10.0)}
+             "IINA": ("right", "left", 5.0), "Twitch": ("right", "left", 10.0), "FreeTube": ("right", "left", 5.0),
+             "mpv.net": ("right", "left", 5.0), "Udemy": ("right", "left", 5.0)}
 DEFAULT_SEEK = ("right", "left", 10.0)                # Netflix, Hulu, Disney+, Prime Video, Media Player…
 
 

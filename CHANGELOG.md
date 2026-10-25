@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.2.2]
 
 ### Added
 - **Dark rooms and busy rooms** (*Camera → Surroundings*). RotaryUI notices when the room has been dark for a
@@ -9,6 +9,22 @@
   tracker sees (and smooths the grain of a very dark room); **Focus on me** follows only the hands of the person
   closest to the camera, so someone behind you or walking past can't open the rotary. Both are done inside
   RotaryUI: the camera's and the computer's settings are left alone.
+- **Engineering apps.** A new *Engineering* group on the Apps page with SOLIDWORKS (rebuild, zoom to fit, the view
+  orientation menu, standard views, save), Autodesk Fusion (command search, fit view, measure, extrude), AutoCAD
+  (object snap, grid, ortho, polar tracking, dynamic input), Inventor, Arduino IDE (verify, upload, serial
+  monitor) and MATLAB (run), plus Revit, Rhino, SketchUp, FreeCAD, KiCad, Altium Designer and LTspice.
+- **Medal and the NVIDIA app.** Medal's Quick nav clips the last moments of your game (its F8 clip key, pressed
+  in the game) and opens your clips; the NVIDIA app's saves an Instant Replay, records, screenshots and opens the
+  overlay.
+- **More code and creative apps.** IntelliJ IDEA, PyCharm and Android Studio (run, debug, stop, Find action),
+  Windsurf (with recent projects), Postman and Wireshark; Illustrator, After Effects, CapCut, GIMP, Krita,
+  Audacity and Unreal Engine; OneNote and Zotero. VS Code, Cursor and Windsurf gain the command palette and the
+  terminal; Blender, Premiere Pro and DaVinci Resolve gain play / render / export.
+- **More videos and slideshows.** The video ring now also opens over course and lecture sites (Coursera, Udemy,
+  Khan Academy, edX, LinkedIn Learning, Pluralsight, Skillshare, MasterClass, Panopto, Microsoft Stream, Loom,
+  TED) and FreeTube, mpv.net, MPC-QT and Jellyfin Media Player; the slides ring over Zoho Show, Beautiful.ai and
+  Pympress.
+- Installed apps named like "AutoCAD 2025 - English", "SOLIDWORKS 2024 SP2.0" or "MATLAB R2024a" are recognised.
 
 ## [2.1.1]
 

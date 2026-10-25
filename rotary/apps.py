@@ -178,14 +178,16 @@ def start_apps(refresh: bool = False, wait: bool = True) -> list[StartApp]:
 
 
 def name_matches(name: str, want: str) -> bool:
-    """"OBS Studio (64bit)" and "Blender 4.2" match "OBS Studio" / "Blender"; "EA Sports FC" doesn't match "EA"."""
+    """"OBS Studio (64bit)", "Blender 4.2", "AutoCAD 2025 - English" and "MATLAB R2024a" match "OBS Studio" /
+    "Blender" / "AutoCAD" / "MATLAB"; "EA Sports FC" doesn't match "EA"."""
     n, w = name.lower().strip(), want.lower().strip()
     if n == w:
         return True
     if not n.startswith(w + " "):
         return False
     rest = n[len(w):].strip()
-    return rest.startswith("(") or re.fullmatch(r"v?[\d.]+( lts| beta| preview)?", rest) is not None
+    return rest.startswith("(") or re.fullmatch(r"(v?[\d.]+|r\d{4}[ab])( lts| beta| preview| sp[\d.]+| x64| - [a-z]+)?",
+                                                rest) is not None
 
 
 def find_start_app(*names: str) -> StartApp | None:
