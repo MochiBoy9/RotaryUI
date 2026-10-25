@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QCheckBox, QC
 from .. import (DATA_DIR, DEVICE, MAC, OS_NAME, ROOT, WIN, __version__, apps, integrations, keys, obs, system, update,
                winapi)
 from .. import assist as ai
+from .. import environment
 from ..actions import open_target
 from ..actions import ACTION_TYPES, ASSIST_ITEM, CONFIG_PATH, MEDIA_PRESETS, Item, build_items
 from ..gestures import EngineSnapshot, GestureSettings, Phase
@@ -2359,11 +2360,46 @@ class CameraPage(QWidget):
         self.pause.toggled.connect(self.app.set_paused)
         c.add(Row("Pause for now", "Camera off until you turn this back off", self.pause))
         side.addWidget(c)
+        # Surroundings: fixes for a dark room or a busy one, made inside RotaryUI (the camera is left as it is).
+        env = environment.settings(self.app.cfg)
+        c = Card("Surroundings", "Changes only the picture RotaryUI tracks on. Your camera's and your "
+                                 "computer's settings stay as they are.")
+        self.room = QLabel("Measuring…")
+        self.room.setObjectName("value")
+        self.room.setWordWrap(True)
+        self.room.setAccessibleName("Room")
+        rw = QWidget()
+        rh = QVBoxLayout(rw)
+        rh.setContentsMargins(14, 10, 14, 10)
+        rh.addWidget(self.room)
+        c.add(rw)
+        self.suggest = Switch(bool(env["suggest"]))
+        self.suggest.toggled.connect(lambda on: self._env("suggest", on))
+        c.add(Row("Suggest fixes", "Asks first when the room is dark or busy", self.suggest))
+        self.boost = Switch(bool(env["low_light_boost"]))
+        self.boost.toggled.connect(lambda on: self._env("low_light_boost", on))
+        c.add(Row("Low-light boost", "Brightens a dark room or a face lit from behind", self.boost))
+        self.focus = Switch(bool(env["focus_on_me"]))
+        self.focus.toggled.connect(lambda on: self._env("focus_on_me", on))
+        c.add(Row("Focus on me", "Follows only the person closest to the camera", self.focus))
+        side.addWidget(c)
         side.addStretch(1)
         sw = QWidget()
         sw.setLayout(side)
         sw.setFixedWidth(300)
-        root.addWidget(sw)
+        sa = scroll_page(sw)                         # three cards: scrolls in a short window instead of squashing
+        sa.setFixedWidth(312)
+        root.addWidget(sa)
+
+    def _env(self, key: str, on: bool) -> None:
+        cam = self.app.cfg.setdefault("camera", {})
+        cam[key] = on
+        if key == "suggest" and on:
+            cam["never"] = []                        # turning suggestions back on brings back every kind
+        self.app.apply_config()
+
+    def set_room(self, text: str) -> None:
+        self.room.setText(text)
 
     def _use(self, on: bool) -> None:
         self.app.cfg.setdefault("general", {})["camera"] = on
@@ -2373,6 +2409,10 @@ class CameraPage(QWidget):
     def refresh(self) -> None:
         on = bool(self.app.cfg.get("general", {}).get("camera", True))
         self.use.set_silent(on)
+        env = environment.settings(self.app.cfg)
+        self.suggest.set_silent(bool(env["suggest"]))
+        self.boost.set_silent(bool(env["low_light_boost"]))
+        self.focus.set_silent(bool(env["focus_on_me"]))
         self.pause.setEnabled(on)
         self.combo.setEnabled(on)
         if not on:
