@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.2.2]
 
 ### Added
 - **Dark rooms and busy rooms** (*Camera → Surroundings*). RotaryUI notices when the room has been dark for a
