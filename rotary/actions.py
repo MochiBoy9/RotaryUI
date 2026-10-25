@@ -167,7 +167,13 @@ DEFAULT_CONFIG = {
         "alerts_over_games": True,
     },
     "integrations": {"obs": {"host": "localhost", "port": 4455}},
-    "camera": {"preferred": ""},
+    "camera": {
+        "preferred": "",
+        "suggest": True,             # offer a fix when the room is dark, lit from behind or busy (environment.py)
+        "low_light_boost": False,    # brighten the picture tracking sees, in software
+        "focus_on_me": False,        # follow only the hands of the person nearest the camera
+        "never": [],                 # suggestions answered "Don't ask again": dark | backlit | crowded
+    },
     "assist": {                  # screen assist (assist.py)
         "provider": "gemini",    # gemini | groq | openrouter | ollama | anthropic | openai
         "models": {},            # provider → model ('' = its default)

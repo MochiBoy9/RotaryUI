@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Dark rooms and busy rooms** (*Camera → Surroundings*). RotaryUI notices when the room has been dark for a
+  while, a window behind you leaves your face in shadow, or other people are in view, and asks whether to turn
+  on the fix. Nothing changes until you accept. **Low-light boost** brightens and evens out the picture the hand
+  tracker sees (and smooths the grain of a very dark room); **Focus on me** follows only the hands of the person
+  closest to the camera, so someone behind you or walking past can't open the rotary. Both are done inside
+  RotaryUI: the camera's and the computer's settings are left alone.
+
 ## [2.1.1]
 
 ### Added

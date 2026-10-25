@@ -268,6 +268,20 @@ few quick switches. The sidebar groups the rest under *Rotary*, *Features* and *
 have installed; it's used on the rotary and the notch too). The window itself is plain and solid; liquid glass is
 kept for the rotary.
 
+## Dark rooms and busy rooms
+
+RotaryUI keeps an eye on the room it sees. When it's been dark for a while, a window or lamp behind you leaves
+your face in shadow, or other people are in view, it asks whether to turn on a fix. Nothing changes until you
+say yes, and you can switch either fix on or off yourself in *Camera › Surroundings*:
+
+- **Low-light boost** brightens and evens out the picture the hand tracker sees, and smooths the grain of a
+  very dark room.
+- **Focus on me** follows only the hands of the person closest to the camera, so people sitting behind or
+  walking past you can't open or turn the rotary.
+
+Both work inside RotaryUI on the picture it tracks: your camera's settings and your computer's are never
+changed. *Don't ask again* stops that suggestion; turning *Suggest fixes* off and on brings them all back.
+
 ## Accidental-open protection
 
 The rotary ignores a hand that is:

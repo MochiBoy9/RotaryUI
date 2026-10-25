@@ -19,10 +19,10 @@ from PySide6.QtCore import QObject, QFileSystemWatcher, QPointF, QRectF, Qt, QTi
 from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QConicalGradient, QFont, QFontMetricsF,
                            QGuiApplication, QIcon, QLinearGradient, QPainter, QPen, QPixmap, QRadialGradient)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from . import (DATA_DIR, LINUX, T0, WIN, __version__, assist, integrations, keys, modes, system, tutorial,
-               update, winapi)
+from . import (DATA_DIR, LINUX, T0, WIN, __version__, assist, environment, integrations, keys, modes, system,
+               tutorial, update, winapi)
 from .actions import (CONFIG_PATH, Item, back_item, build_items, cleanup_scripts, execute, item_from, load_config,
                       save_config)
 from .feedback import Sounds, Speaker
@@ -419,6 +419,9 @@ class RotaryApp(QObject):
         self.weather.changed.connect(lambda w: setattr(self.dial.painter_, "weather", self.weather.fresh()))
         self._was_sliding = False
         self._face_touch = FaceTouch()
+        self.env = environment.EnvironmentMonitor()     # dark room, light behind you, other people in view
+        self.focus = environment.FocusOnMe()
+        self._env_box: QMessageBox | None = None
         self.tour = None                   # the first-run tour's card while it's up (ui/tutorial.py)
         self.mouse_trigger = MouseTrigger(self)
         self.mouse_trigger.event.connect(self._on_mouse_trigger)
@@ -453,6 +456,7 @@ class RotaryApp(QObject):
 
         prefer = (self.cfg.get("camera") or {}).get("preferred") or None
         self.tracker = TrackerThread(prefer_camera=prefer)
+        self.tracker.low_light_boost = bool(environment.settings(self.cfg)["low_light_boost"])
         self.tracker.result.connect(self.on_result)
         self.tracker.status.connect(self.on_status)
         self.action_done.connect(self._on_action_done)
@@ -720,6 +724,10 @@ class RotaryApp(QObject):
             self.pill.set_status("", hidden=True)
             self.notch.set_status("", hidden=True)
         gen = self.cfg.get("general", {})
+        env = environment.settings(self.cfg)
+        self.tracker.low_light_boost = bool(env["low_light_boost"])
+        if not env["focus_on_me"]:
+            self.focus.reset()
         self._set_camera(bool(gen.get("camera", True)))
         self.notch.set_accessibility(ap.get("text_scale", 1.0), ap.get("high_contrast", False),
                                      ap.get("reduce_motion", False))
@@ -1669,6 +1677,14 @@ class RotaryApp(QObject):
         flip = self.settings.flip_handedness
         feats = [extract_features(h, flip) for h in res.hands]
         aspect = res.width / max(res.height, 1)
+        env = environment.settings(self.cfg)
+        if env["focus_on_me"] and feats:
+            keep = self.focus.keep(feats, res.faces, aspect, res.t)
+            if len(keep) < len(feats):             # someone else's hands: as if they weren't there
+                res.hands = [res.hands[i] for i in keep]
+                feats = [feats[i] for i in keep]
+        if res.scene is not None:
+            self._on_scene(res.scene, env)
         idx, same = pick_hand(feats, res.faces, self._prev_center, aspect)
         f = None
         if idx >= 0:
@@ -1711,6 +1727,60 @@ class RotaryApp(QObject):
         if want:
             self.window.camera.set_frame(res.preview, res.hands, feats, idx, snap, res.faces)
         self._update_pill(snap)
+
+    # ------------------------------------------------------------ surroundings
+    def _on_scene(self, sample: environment.SceneSample, env: dict) -> None:
+        self.env.add(sample)
+        cam = self.window.page("camera")
+        if cam is not None:
+            cam.set_room(self.env.reading())
+        # Ask only while nothing else is going on: not mid-gesture, not over a full-screen game or video.
+        busy = (self.engine.phase != Phase.IDLE or self.keyboard_session or self.tour is not None
+                or self._calib is not None or self._fullscreen or self.engine.paused)
+        if busy:
+            return
+        sug = self.env.suggest(env, time.monotonic())
+        if sug is not None:
+            log.info("surroundings: %s (%s) — suggesting %s", sug.kind, sug.reading, sug.setting)
+            self._ask_environment(sug)
+
+    def _ask_environment(self, sug: environment.Suggestion) -> None:
+        """Put the suggestion in front of the user. Nothing changes unless they say yes."""
+        box = QMessageBox()
+        box.setWindowTitle("RotaryUI")
+        box.setWindowIcon(self.app_icon)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(sug.title)
+        box.setInformativeText(sug.text + "\n\nYou can change this any time in Camera → Surroundings.")
+        yes = box.addButton("Turn on", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
+        never = box.addButton("Don't ask again", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(yes)
+        box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+
+        def done(_=None) -> None:
+            self._env_box = None
+            self._answer_environment(sug, box.clickedButton() is yes, box.clickedButton() is never)
+
+        box.finished.connect(done)
+        self._env_box = box
+        box.show()                                   # not modal: it never holds up the rotary
+
+    def _answer_environment(self, sug: environment.Suggestion, accepted: bool, never: bool = False) -> None:
+        cam_cfg = self.cfg.setdefault("camera", {})
+        if accepted:
+            cam_cfg[sug.setting] = True
+            log.info("surroundings: %s turned on", sug.setting)
+            self._flash_msg({"low_light_boost": "Low-light boost on",
+                             "focus_on_me": "Following only you"}.get(sug.setting, "Done"), "done", GREEN, 2.0)
+        elif never:
+            cam_cfg["never"] = sorted(set(cam_cfg.get("never") or []) | {sug.kind})
+        self.env.answered(accepted, time.monotonic())
+        self.apply_config()
+        cam = self.window.page("camera")
+        if cam is not None:
+            cam.refresh()
 
     def _update_resize(self, feats: list[HandFeatures], now: float) -> None:
         """Two-hand pinch-and-stretch resizes the window in front, while the rotary is put away."""
