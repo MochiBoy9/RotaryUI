@@ -221,36 +221,53 @@ class Capture(threading.Thread):
 
 
 class Enhancer:
-    """Adaptive gamma / CLAHE for dim or low-quality sensors, plus downscale of huge frames."""
+    """Adaptive gamma / CLAHE for dim or low-quality sensors, plus downscale of huge frames.
+
+    boost (Low-light boost, which the user turns on) brightens harder and further up, always evens out local
+    contrast (a face lit from behind, a hand in shadow) and smooths sensor noise in a very dark room. It only
+    changes the picture RotaryUI tracks on; the camera itself is never reconfigured."""
 
     def __init__(self):
         self._n = 0
         self._lut = None
         self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        self._clahe_boost = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         self._dark = False
+        self._noisy = False
         self.gamma = 1.0
+        self.light = -1.0           # mean brightness of the raw picture, 0-255 (-1: not measured yet)
+        self.boost = False
+        self._boosted = False
 
     def __call__(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
         if w > 1280:
             s = 960 / w
             frame = cv2.resize(frame, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
-        if self._n % 15 == 0:
+        boost = self.boost
+        if self._n % 15 == 0 or boost != self._boosted:
             g = cv2.cvtColor(cv2.resize(frame, (80, 60), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
-            m = max(float(g.mean()), 4.0)
+            self.light = float(g.mean())
+            m = max(self.light, 4.0)
             gamma = 1.0
-            if m < 90:
-                gamma = max(0.4, min(1.0, np.log(115 / 255) / np.log(m / 255)))
-            if abs(gamma - self.gamma) > 0.04 or (gamma == 1.0) != (self._lut is None):
+            target, below, floor = (135, 115, 0.3) if boost else (115, 90, 0.4)
+            if m < below:
+                gamma = max(floor, min(1.0, np.log(target / 255) / np.log(m / 255)))
+            if (abs(gamma - self.gamma) > 0.04 or (gamma == 1.0) != (self._lut is None)
+                    or boost != self._boosted):
                 self.gamma = gamma
                 self._lut = None if gamma >= 0.99 else np.array(
                     [((i / 255.0) ** gamma) * 255 for i in range(256)], np.uint8)
             self._dark = m < 45
+            self._noisy = boost and m < 35
+            self._boosted = boost
         self._n += 1
+        if self._noisy:
+            frame = cv2.GaussianBlur(frame, (3, 3), 0)     # before brightening, which would magnify the grain
         if self._lut is not None:
             frame = cv2.LUT(frame, self._lut)
-        if self._dark:
+        if self._dark or boost:
             lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-            lab[:, :, 0] = self._clahe.apply(lab[:, :, 0])
+            lab[:, :, 0] = (self._clahe_boost if boost else self._clahe).apply(lab[:, :, 0])
             frame = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         return frame

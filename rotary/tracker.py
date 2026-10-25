@@ -14,6 +14,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 from . import DATA_DIR, ROOT
+from .environment import SceneSample
 from .gestures import HandFrame
 
 # OpenCV and MediaPipe are heavy: they load inside the tracking thread, and only when the camera is used.
@@ -28,6 +29,7 @@ FACE_URL = ("https://storage.googleapis.com/mediapipe-models/face_detector/"
             "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite")
 ACTIVE_GAP = 0.026        # seconds between tracked frames with a hand about: ~30 fps (a 60 fps camera skips half)
 IDLE_GAP = 0.075          # …and with nobody around: ~12 fps, still quick to notice a hand coming up
+SCENE_GAP = 1.0           # seconds between looks at the room (light, faces) for the environment check
 
 
 @dataclass
@@ -39,6 +41,7 @@ class TrackResult:
     preview: QImage | None = None
     infer_ms: float = 0.0
     faces: list[tuple[float, float, float, float]] = field(default_factory=list)  # normalised x0, y0, x1, y1
+    scene: SceneSample | None = None   # about once a second: the room's light and how many people are in view
 
 
 @dataclass
@@ -140,6 +143,8 @@ class TrackerThread(QThread):
         self.cameras: list[CameraInfo] = []
         self.current: CameraInfo | None = None
         self.paused = False
+        self.low_light_boost = False   # set from the UI thread: the stronger brightening (Camera → Surroundings)
+        self._next_scene = 0.0
 
     # -- called from the UI thread
     def stop(self):
@@ -263,6 +268,8 @@ class TrackerThread(QThread):
     def _process(self, mp, landmarker, face_det, enhancer, frame, t_cap, capture, faces_box) -> int:
         import cv2
         frame = cv2.flip(frame, 1)                   # selfie / mirror view
+        raw = frame
+        enhancer.boost = self.low_light_boost
         frame = enhancer(frame)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         ts = max(int(t_cap * 1000), self._last_ts + 1)
@@ -286,6 +293,10 @@ class TrackerThread(QThread):
                     log.debug("face detection failed", exc_info=True)
         elif not res.hand_landmarks:
             faces_box["n"] = 0
+        scene = None
+        if t_cap >= self._next_scene:
+            self._next_scene = t_cap + SCENE_GAP
+            scene = self._scene(face_det, image, ts, raw, enhancer, faces_box, bool(res.hand_landmarks), t_cap)
         hands = []
         for lms, wlms, hd in zip(res.hand_landmarks, res.hand_world_landmarks, res.handedness):
             hands.append(HandFrame(
@@ -301,8 +312,33 @@ class TrackerThread(QThread):
             small = cv2.resize(rgb, (480, int(480 * h / w)), interpolation=cv2.INTER_AREA)
             preview = QImage(small.data, small.shape[1], small.shape[0], small.strides[0],
                              QImage.Format.Format_RGB888).copy()
-        self.result.emit(TrackResult(t_cap, hands, w, h, preview, infer_ms, list(faces_box["faces"])))
+        self.result.emit(TrackResult(t_cap, hands, w, h, preview, infer_ms, list(faces_box["faces"]), scene))
         return len(hands)
+
+    @staticmethod
+    def _scene(face_det, image, ts, raw, enhancer, faces_box, have_faces, t) -> SceneSample:
+        """The room right now, from the raw picture: its light, how many faces, and how lit the nearest one is."""
+        import cv2
+        faces = faces_box["faces"]
+        if face_det is not None and not have_faces:
+            try:                                     # nobody's hand in view: faces aren't looked for otherwise
+                fr = face_det.detect_for_video(image, ts)
+                h, w = image.height, image.width
+                faces = [(d.bounding_box.origin_x / w, d.bounding_box.origin_y / h,
+                          (d.bounding_box.origin_x + d.bounding_box.width) / w,
+                          (d.bounding_box.origin_y + d.bounding_box.height) / h) for d in fr.detections]
+            except Exception:
+                faces = []
+        gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
+        light = enhancer.light if enhancer.light >= 0 else float(cv2.resize(gray, (80, 60)).mean())
+        face_light = -1.0
+        if faces:
+            gh, gw = gray.shape[:2]
+            x0, y0, x1, y1 = max(faces, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
+            box = gray[max(0, int(y0 * gh)):min(gh, int(y1 * gh)), max(0, int(x0 * gw)):min(gw, int(x1 * gw))]
+            if box.size:
+                face_light = float(box.mean())
+        return SceneSample(t, light, len(faces), face_light)
 
     _last_ts = 0
 
