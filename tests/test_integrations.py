@@ -89,6 +89,10 @@ def test_uri_to_path_windows_drive():
     ("OBS Studio", "OBS Studio", True), ("OBS Studio (64bit)", "OBS Studio", True),
     ("Blender 4.2", "Blender", True), ("Visual Studio 2022", "Visual Studio", True),
     ("EA Sports FC 25", "EA", False), ("Steam Support Center", "Steam", False), ("XBOX", "Xbox", True),
+    ("SOLIDWORKS 2024", "SOLIDWORKS", True), ("SOLIDWORKS 2024 SP2.0", "SOLIDWORKS", True),
+    ("AutoCAD 2025 - English", "AutoCAD", True), ("MATLAB R2024a", "MATLAB", True), ("KiCad 8.0", "KiCad", True),
+    ("SOLIDWORKS eDrawings 2024", "SOLIDWORKS", False), ("AutoCAD LT 2025", "AutoCAD", False),
+    ("MATLAB Runtime", "MATLAB", False),
 ])
 def test_start_menu_name_matching(name, want, ok):
     assert apps.name_matches(name, want) is ok
@@ -126,6 +130,38 @@ def test_every_builtin_action_list_builds():
             if d["action"]["type"] in ("keys", "window_keys"):
                 for k in winapi.parse_keys(d["action"]["keys"]):
                     winapi.vk_code(k)            # every shortcut is pressable
+
+
+def test_every_catalogue_entry_builds_on_every_system(monkeypatch):
+    """CATALOG only holds this system's apps, so build the Windows-only ones (SOLIDWORKS, Medal…) here too."""
+    monkeypatch.setattr("rotary.live._medal_folder", lambda: Path("Videos") / "Medal")
+    ids = [s.id for s in integrations._ALL]
+    assert len(ids) == len(set(ids))
+    for s in integrations._ALL:
+        assert s.category in integrations.CATEGORIES + ["Windows", "macOS", "Linux"], s.id
+        assert int(s.glyph, 16) and s.actions is not None
+        a = integrations.App(s, target="x.exe", exe="", installed=True)
+        built = s.actions(a)
+        assert built and len(built) <= integrations.QUICKNAV_MAX, s.id
+        for d in built:
+            assert actions.item_from(d) is not None, (s.id, d)
+            if d["action"]["type"] in ("keys", "window_keys"):
+                for k in winapi.parse_keys(d["action"]["keys"]):
+                    winapi.vk_code(k)
+
+
+def test_engineering_apps_press_their_own_shortcuts(monkeypatch):
+    monkeypatch.setattr(integrations, "MAC", False)
+    sw = integrations.App(next(s for s in integrations._ALL if s.id == "solidworks"), exe="", installed=True)
+    by_name = {d["name"]: d["action"] for d in sw.spec.actions(sw)}
+    assert by_name["Rebuild"] == {"type": "window_keys", "process": "SLDWORKS.exe", "keys": "ctrl+b",
+                                  "restore": False, "label": "SOLIDWORKS"}
+    assert by_name["Zoom to fit"]["keys"] == "f"
+    medal = integrations.App(next(s for s in integrations._ALL if s.id == "medal"), installed=True)
+    monkeypatch.setattr("rotary.live._medal_folder", lambda: Path("clips"))
+    clip = next(d for d in medal.spec.actions(medal) if d["name"] == "Clip that")
+    assert clip["action"] == {"type": "keys", "keys": "f8"}         # pressed in the game, not in Medal
+    assert integrations.key_label("pageup") == "PgUp"
 
 
 # ------------------------------------------------------------------ keys, config, python

@@ -88,11 +88,12 @@ Whenever the rotary is on screen — however you opened it — the mouse works o
 
 What's in front decides how the rotary opens:
 
-- **Over a slideshow** (PowerPoint, Google Slides, Keynote, LibreOffice Impress…) it's a **slides ring**: no
+- **Over a slideshow** (PowerPoint, Google Slides, Keynote, LibreOffice Impress, Zoho Show, Pympress…) it's a **slides ring**: no
   icons, a cut between every two slides, and a firm click per slide so it doesn't change slide by accident. It
   stops at the first and last slide. PowerPoint and Keynote say how many slides there are; with the others it
   simply steps forward and back. Slides change with Page Down / Page Up, like a presentation clicker.
-- **Over a video** (YouTube, Netflix, Hulu, VLC, Media Player, mpv, QuickTime…) it's a **video ring**: one full
+- **Over a video** (YouTube, Netflix, Hulu, VLC, Media Player, mpv, QuickTime, and course and lecture sites such
+  as Coursera, Udemy, Khan Academy, edX, LinkedIn Learning and Panopto…) it's a **video ring**: one full
   turn is the whole video, so turn it to the moment you want. It turns by itself as the video plays, holds still
   while you turn it, and stops at the start and the end. It jumps through the system's media controls (Windows,
   and MPRIS on Linux); where those can't move the video, or on a Mac, each click presses the player's own seek
@@ -183,7 +184,19 @@ item. Only installed apps are offered.
 | Steam | Your games, most recently played first, plus Library, Big Picture, Friends, Store, Downloads |
 | OBS Studio | Record, pause, stream, save replay, virtual camera, mute mic, and every scene |
 | Discord | Open, DMs, mute, deafen, quick switcher |
-| VS Code / Cursor | Open, new window, and your recent projects |
+| VS Code / Cursor / Windsurf | Open, new window, command palette, terminal, and your recent projects |
+| IntelliJ IDEA / PyCharm / Android Studio | Run, debug, stop, Find action |
+| SOLIDWORKS | Rebuild, zoom to fit, view orientation, isometric / front / top / normal-to views, save |
+| Autodesk Fusion | Command search, fit view, measure, extrude, sketch dimension |
+| AutoCAD | Object snap, grid, ortho, polar tracking, dynamic input on / off |
+| Inventor | Home view, zoom all, look at, previous view |
+| Arduino IDE | Verify, upload, serial monitor |
+| MATLAB | Run the script in the editor |
+| Medal | Clip that (F8, pressed in your game), your clips folder |
+| NVIDIA app | Save Instant Replay, record, screenshot, overlay |
+| Blender | Render, play the animation, save |
+| Premiere Pro / DaVinci Resolve / Audacity | Play / pause (Premiere: export; Audacity: record) |
+| Wireshark | Start / stop capture, find packet |
 | Claude | The Claude app, a new chat, and Claude Code in a terminal |
 | Spotify / Apple Music / VLC | Play/pause, next, previous (Spotify: search) |
 | Browsers | New window, private window, reopen the last tab |
@@ -194,8 +207,10 @@ item. Only installed apps are offered.
 | Linux | Lock, overview, screenshot, files, terminal, settings |
 | Xbox Game Bar | Record that, record, screenshot, mic |
 
-There are about 45 apps in total, including Epic, Battle.net, EA, Slack, Notion, Obsidian, Blender, Photoshop,
-Figma, Unity Hub and Office. Any other installed app, including Store apps, can be added from
+There are about 80 apps in total, including Epic, Battle.net, EA, Slack, Notion, Obsidian, Photoshop, Illustrator,
+After Effects, Figma, Unity Hub, Unreal Engine, Office, OneNote and Zotero, and an *Engineering* group with
+Revit, Rhino, SketchUp, FreeCAD, KiCad, Altium Designer and LTspice. CAD and IDE shortcuts are the apps' defaults;
+if you've changed one in the app, add your own item that does *Press a shortcut inside an app*. Any other installed app, including Store apps, can be added from
 *Rotary → + → Any installed app*.
 
 OBS works with no setup: if OBS is closed, choosing Record starts OBS already recording. To control OBS while it

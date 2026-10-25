@@ -19,6 +19,12 @@ from rotary.volume import parse_percent
     ("msedge.exe", "Watch Hulu - Microsoft Edge", "video", "Hulu"),
     ("netflix", "Netflix", "video", "Netflix"),
     ("QuickTime Player", "", "video", "QuickTime Player"),
+    ("chrome.exe", "Lecture 3: Fourier series | Coursera - Google Chrome", "video", "Coursera"),
+    ("msedge.exe", "Python bootcamp | Udemy - Microsoft Edge", "video", "Udemy"),
+    ("firefox", "ME 201 lecture - Panopto — Mozilla Firefox", "video", "Panopto"),
+    ("FreeTube.exe", "FreeTube", "video", "FreeTube"),
+    ("chrome.exe", "Design review - Zoho Show - Google Chrome", "slides", "Zoho Show"),
+    ("pympress", "talk.pdf", "slides", "Pympress"),
 ])
 def test_classify_finds_slideshows_and_videos(exe, title, kind, app):
     ctx = modes.classify(exe, title)
@@ -30,6 +36,8 @@ def test_classify_finds_slideshows_and_videos(exe, title, kind, app):
     ("code.exe", "youtube.py - Visual Studio Code"),        # the word, but not in a browser
     ("chrome.exe", "Maximum effort - Google Docs"),         # 'Max' inside another word
     ("explorer.exe", "Videos"),
+    ("SLDWORKS.exe", "Bracket.SLDPRT - SOLIDWORKS"),            # CAD keeps the usual ring
+    ("chrome.exe", "Wanted: TEDx organisers - Gmail"),          # 'TED' inside another word
     ("", ""),
 ])
 def test_classify_leaves_everything_else_alone(exe, title):
