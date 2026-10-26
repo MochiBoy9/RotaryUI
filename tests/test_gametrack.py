@@ -526,3 +526,26 @@ def test_zones_can_be_moved_in_the_config():
     z = zones_of(finals.PROFILE, {"feed": [0.5, 0.0, 1.0, 0.2], "extra": [0, 0, 0.5, 0.5, 0, 1, True], "bad": [2, 0]})
     assert z["feed"][:4] == (0.5, 0.0, 1.0, 0.2) and z["feed"].angle == finals.ZONES["feed"].angle   # keeps its tilt
     assert z["extra"] == Zone(0, 0, 0.5, 0.5, block=True) and "bad" not in z
+
+
+def test_zones_that_cant_say_anything_are_skipped():
+    from rotary.gametrack.watcher import read_frame
+
+    class Seen(ocr.Engine):
+        def __init__(self):
+            self.n = 0
+
+        def read(self, img, scale=1.0, block=False):
+            self.n += 1
+            return []
+
+    frame = np.zeros((H, W, 3), np.uint8)
+    eng = Seen()
+    read_frame(frame, finals.PROFILE, eng, {"frame_no": 0})
+    everything = eng.n
+    eng.n = 0
+    read_frame(frame, finals.PROFILE, eng, {"frame_no": 4, "dead": False, "know_name": True})
+    assert eng.n == everything - 2                      # no death card while alive, no name to learn
+    eng.n = 0
+    read_frame(frame, finals.PROFILE, eng, {"frame_no": 4, "dead": True, "know_name": False})
+    assert eng.n == everything

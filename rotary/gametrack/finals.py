@@ -548,8 +548,18 @@ def read(zones: dict[str, list[Row]], size: tuple[int, int], ctx: dict) -> list[
     return out
 
 
+def skip(zone: str, ctx: dict) -> bool:
+    """Zones that can't say anything new right now: the death card while you're alive (the red bar says you're
+    out first), and your name once it's known (looked at now and then in case it changes)."""
+    if zone == "card":
+        return not ctx.get("dead")
+    if zone == "self":
+        return bool(ctx.get("know_name")) and ctx.get("frame_no", 0) % 40 != 0
+    return False
+
+
 PROFILE = Profile(
     key="the_finals", name="THE FINALS", exe=("discovery.exe",), titles=("the finals",), zones=ZONES,
-    modes=MODES, read=read, elimination_cash=(500, 1000), words=WORDS,
+    modes=MODES, read=read, elimination_cash=(500, 1000), words=WORDS, skip=skip,
     notes="Set THE FINALS to Borderless or Windowed (Settings → Video → Window mode): in exclusive Fullscreen "
           "Windows doesn't let other apps see the game.")

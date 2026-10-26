@@ -62,8 +62,8 @@ def read_frame(frame, prof: Profile, engine: ocr.Engine, ctx: dict, zones: dict 
     n = int(ctx.get("frame_no", 0) or 0)
     by_zone, texts = {}, {}
     for name, z in zones_of(prof, zones).items():
-        if n % max(1, z.every):
-            continue
+        if n and (n % max(1, z.every) or prof.skip is not None and prof.skip(name, {**ctx, "frame_no": n})):
+            continue                                  # a check (frame 0) reads every zone
         pix, x0, y0 = capture.crop(frame, z[:4])
         back = None
         if z.angle or z.slant:
@@ -121,8 +121,9 @@ class _Reader(threading.Thread):
                     frame, status = self._frame(prof, force=shot is not None)
                 if frame is not None and engine.available():
                     count += 1
-                    ctx = {"names": names_for(cfg), "words": s.get("words") or {},
-                           "frame_no": 0 if shot is not None else count}   # a check reads every zone
+                    names = names_for(cfg)
+                    ctx = {"names": names, "words": s.get("words") or {}, "dead": self.owner.tracker.dead,
+                           "know_name": bool(names), "frame_no": 0 if shot is not None else count}
                     try:
                         obs, texts = read_frame(frame, prof, engine, ctx, s.get("zones") or {})
                     except Exception as e:

@@ -96,3 +96,5 @@ class Profile:
     elimination_cash: tuple[int, ...] = ()     # what an elimination adds to the team's score: finds your team
     notes: str = ""
     words: dict = field(default_factory=dict)  # every phrase the reader looks for (can be added to from config)
+    # zones not worth reading this frame, from what's known (ctx["dead"], ctx["know_name"]…): saves OCR time
+    skip: Callable[[str, dict], bool] | None = None

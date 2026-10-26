@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.4.0]
 
 ### Added
 - **Active Game Tracking** (experimental, *Game tracking* page), for THE FINALS. While the game is in front,
@@ -16,6 +16,8 @@
   in. While you're out only the killfeed can add an elimination. Start and end matches, fix a count or
   the result by hand from the notch or the page. Every match is kept in a local database, with totals and
   *Export CSV…*. *Check what it sees* shows what it read. Needs the game in Borderless or Windowed mode.
+  It reads only the parts of the screen that can say something new (the death card while you're out, your
+  name until it's known), so it keeps up on modest PCs.
 
 ## [2.3.0]
 
