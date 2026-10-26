@@ -442,7 +442,9 @@ def test_watcher_by_hand(tmp_path):
 
 
 # ------------------------------------------------------------------ the whole way: pixels → words → stats
-@pytest.mark.skipif(not shutil.which("tesseract"), reason="needs Tesseract")
+NEEDS_TESSERACT = pytest.mark.skipif(not shutil.which("tesseract"), reason="needs Tesseract")
+
+
 def _hud(draw):
     """A 1080p frame: a busy, bright-ish picture with whatever `draw(painter, font)` puts over it."""
     img = QImage(W, H, QImage.Format.Format_RGB32)
@@ -468,6 +470,7 @@ def _tilted(p, x, y, angle, fn):
     p.restore()
 
 
+@NEEDS_TESSERACT
 def test_a_drawn_hud_is_read():
     """Season 12's layout, drawn: the killfeed leaning up at the top right, the cash board leaning down at the
     top left with your rank in a blue box, the clock, the headline and tally under the crosshair."""
@@ -507,6 +510,7 @@ def test_a_drawn_hud_is_read():
     assert (IN_MATCH, "") in got
 
 
+@NEEDS_TESSERACT
 def test_a_drawn_death_screen_is_read():
     from rotary.gametrack.watcher import read_frame
 
