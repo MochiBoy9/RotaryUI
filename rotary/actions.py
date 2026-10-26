@@ -167,6 +167,14 @@ DEFAULT_CONFIG = {
         "look": "dark",          # dark | glass
         "alerts_over_games": True,
     },
+    "agents": {                  # AI agents on the notch (agents.py)
+        "enabled": True,         # the local server Claude Code, Codex, MCP clients and models report to
+        "port": 47823,           # on 127.0.0.1 only
+        "token": "",             # the secret every address starts with (made at first start)
+        "ask_seconds": 120,      # how long a question waits on the notch before the agent asks the usual way
+        "flash": True,           # each new step slides in on the notch for a moment
+        "proxies": {},           # name → base URL: more model services for the pass-through
+    },
     "integrations": {"obs": {"host": "localhost", "port": 4455}},
     "camera": {
         "preferred": "",
