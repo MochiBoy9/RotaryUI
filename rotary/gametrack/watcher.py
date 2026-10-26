@@ -297,6 +297,8 @@ class GameWatcher(QObject):
             elif e.kind == "match_end" and self.tracker.last is not None:
                 self._save(self.tracker.last)
                 self.summary_open = True
+            elif e.kind == "result" and self.tracker.last is not None:
+                self._save(self.tracker.last)                 # a placement put the guessed end right
             elif e.kind == "name":
                 cfg = self.cfg_fn()
                 cfg.setdefault("gametrack", {})["learned_name"] = e.text

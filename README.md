@@ -313,17 +313,23 @@ and white text on the red death bar is read as well as light text on the game:
 | --- | --- |
 | Elimination feed (top right) | `Killer [weapon] > Victim`, club tags (`[PR75]`) dropped. With your name set (or learned), you on the left is your elimination, on the right your death. |
 | Under the crosshair | The headline `ELIMINATED Tempest` (`ASSISTED` for an assist) and the tally `ELIMINATION \| +250`, `ASSIST`, `REVIVE`, `TEAM WIPE` with their points. Markers in the world aren't you: REVIVE over a statue, CASHOUT $10000, the stadium's ELIMINATION STREAK, CASHOUT STOLEN. |
-| The death screen | The red bar (`ELIMINATED BY: NAME`, TEAM RESPAWNING IN, FREE CAMERA) and the card on the right (ELIMINATED BY, the damage each way); REVIVED BY. |
+| The death screen | The red bar, by its colour (so it's seen at any resolution, however blurred its words), and its words (`ELIMINATED BY: NAME`, TEAM RESPAWNING IN, RESPAWN AVAILABLE IN, FREE CAMERA); the card on the right (ELIMINATED BY, the damage each way); REVIVED BY. |
 | Teams' cash (top left) | Each team's cash by rank; a yellow `+ $18,000` is cash on its way to a cashout, not banked yet. Your team is the one with its rank in the blue box; KNOCKOUT ZONE says how many go through. |
-| Bottom left | Your name, under your health (`250/250`): read there, it's learned without you typing it. |
+| Bottom left | Your health (`250/250`), which says a match is still on, and your name under it: read there, it's learned without you typing it. |
 | The middle, big | QUALIFIED, VICTORY, DEFEAT, a lone ELIMINATED, WINNER, 1ST–12TH PLACE, and mode names. |
-| Top middle | The round's clock (`12:39`, `+0:17` in overtime) means a match is on; the menus (PLAY, LOADOUT, CAREER…) that it's over. |
+| Top middle | The round's clock (`12:39`, `+0:17` in overtime) means a match is on; the menus (PLAY, LOADOUT, CAREER…) that it's over. In the two-team cash modes, each team's cash to the target either side of it (`$300/1,000`, yours on the left). |
 
 So that nothing counts twice or by mistake, a thing counts only once it's been read in two frames, counts once
 for as long as it stays on screen, and the feed, headline and tally sightings of one elimination (or the feed
 line and the death screen of one death) are merged. Being out is a state: the respawn countdown doesn't add
 deaths, and while you're out only the feed can add an elimination or assist (the middle of the screen may be
-showing the teammate you're watching).
+showing the teammate you're watching). A death is one death however it's read: the bar's colour, its words now
+and then, the card, the killer's name spelt a few ways; the name read most often is the one the notch shows. A
+placement shown after a guessed end (a lone ELIMINATED) puts the result right.
+
+Screen size: the small text is enlarged before it's read, so a 720p screen reads about as well as 1080p or
+1440p. Below that (or in a blurry stream or recording) names and the small kill and assist pop-ups stop being
+readable, but deaths (by the bar's colour), whole matches and results still are.
 
 Your name is learned from under your health once it's been read the same way for a few seconds (not while
 you're watching someone else), or when the tally and the feed name the same player at the same moment, twice.
