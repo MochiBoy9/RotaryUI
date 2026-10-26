@@ -31,7 +31,9 @@ if WIN:
     hiddenimports += ["winsound",
                       # Windows media controls (the notch's "now playing")
                       "winrt.runtime", "winrt.windows.media.control", "winrt.windows.foundation",
-                      "winrt.windows.foundation.collections", "winrt.windows.storage.streams"]
+                      "winrt.windows.foundation.collections", "winrt.windows.storage.streams",
+                      # Windows' own OCR (Active Game Tracking reads the game's HUD with it)
+                      "winrt.windows.media.ocr", "winrt.windows.graphics.imaging", "winrt.windows.globalization"]
 elif MAC:
     # pynput picks its backend at run time; Carbon / Security / Keychain go through ctypes.
     hiddenimports += ["pynput.keyboard._darwin", "pynput.mouse._darwin", "pynput._util.darwin", "AppKit",

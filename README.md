@@ -283,6 +283,66 @@ The server listens on 127.0.0.1 only, so nothing else on the network can reach i
 secret, so web pages can't either. *Make a new secret* replaces it (the tools you connected are moved over). Cloud
 agents such as Claude Code on the web run on someone else's computer, so they can't reach the notch.
 
+## Active Game Tracking (experimental)
+
+Turn on *Game tracking → Track my games* and RotaryUI keeps your stats while you play **THE FINALS** (Embark
+Studios), the one game it knows for now: eliminations, deaths, assists, revives, team wipes, how far ahead or
+behind your team is and what it takes to lead (or to qualify, in a Cashout tournament), and how each match
+ended.
+
+- **On the notch**: a crosshair and up to four stats you pick (*K 5  D 2  A 1  +$2.5k*), kept small while you
+  play: nothing slides in and hovering doesn't open it. It opens by itself only when you're eliminated (who by,
+  every stat, buttons to add one by hand or end the match) and when the match ends. It stays up over the game
+  while a match is on (Borderless or Windowed; never over exclusive full screen).
+- **End of a match**: a summary (Victory, a placement, QUALIFIED rounds, or which round you went out in) that
+  stays until the next match starts. Back in the menus without a win or placement on screen counts as a loss,
+  marked as a best guess with *It was a win* / *It was a loss* to put it right (as is a WINNER banner, which can
+  be about another team).
+- **By hand, any time**: start or end a match, say how it ended, add or take away an elimination, death, assist
+  or revive, from the notch's right-click menu (*Game tracking*), its card while you're out, or the Game
+  tracking page.
+- **History**: every match is kept in `game_stats.sqlite3` in the settings folder, with totals (wins, K/D…) on
+  the page and *Export CSV…*.
+
+How it reads the game: a few times a second, while THE FINALS is the window in front, it copies the game's
+window from the screen and reads parts of it with the OCR built into Windows (Tesseract elsewhere). Season 12's
+HUD leans in at the sides and its fonts are italic, so the corners are levelled and the letters stood up first,
+and white text on the red death bar is read as well as light text on the game:
+
+| Where | What it looks for |
+| --- | --- |
+| Elimination feed (top right) | `Killer [weapon] > Victim`, club tags (`[PR75]`) dropped. With your name set (or learned), you on the left is your elimination, on the right your death. |
+| Under the crosshair | The headline `ELIMINATED Tempest` (`ASSISTED` for an assist) and the tally `ELIMINATION \| +250`, `ASSIST`, `REVIVE`, `TEAM WIPE` with their points. Markers in the world aren't you: REVIVE over a statue, CASHOUT $10000, the stadium's ELIMINATION STREAK, CASHOUT STOLEN. |
+| The death screen | The red bar (`ELIMINATED BY: NAME`, TEAM RESPAWNING IN, FREE CAMERA) and the card on the right (ELIMINATED BY, the damage each way); REVIVED BY. |
+| Teams' cash (top left) | Each team's cash by rank; a yellow `+ $18,000` is cash on its way to a cashout, not banked yet. Your team is the one with its rank in the blue box; KNOCKOUT ZONE says how many go through. |
+| Bottom left | Your name, under your health (`250/250`): read there, it's learned without you typing it. |
+| The middle, big | QUALIFIED, VICTORY, DEFEAT, a lone ELIMINATED, WINNER, 1ST–12TH PLACE, and mode names. |
+| Top middle | The round's clock (`12:39`, `+0:17` in overtime) means a match is on; the menus (PLAY, LOADOUT, CAREER…) that it's over. |
+
+So that nothing counts twice or by mistake, a thing counts only once it's been read in two frames, counts once
+for as long as it stays on screen, and the feed, headline and tally sightings of one elimination (or the feed
+line and the death screen of one death) are merged. Being out is a state: the respawn countdown doesn't add
+deaths, and while you're out only the feed can add an elimination or assist (the middle of the screen may be
+showing the teammate you're watching).
+
+Your name is learned from under your health once it's been read the same way for a few seconds (not while
+you're watching someone else), or when the tally and the feed name the same player at the same moment, twice.
+Setting it yourself is still the surest.
+
+Notes:
+
+- **Screen only.** Nothing reads or touches the game's memory or files, so Easy Anti-Cheat has nothing to
+  object to, and nothing leaves your computer.
+- Set THE FINALS to **Borderless** or **Windowed**: in exclusive Fullscreen Windows gives other apps a black
+  picture (the page says so).
+- *Check what it sees* reads the screen once (or a screenshot you choose) and shows what it read in each part
+  and what it made of it; *Save it* keeps the picture and the text in the `gametrack` folder of the settings
+  folder. The HUD was rebuilt in Season 12, so if something isn't counted, that's the place to look. The parts
+  of the screen (`"zones"`) and extra phrases per kind (`"words"`, for a game in another language) can be set
+  under `"gametrack"` in `config.json`.
+- Adding a game is a new profile in `rotary/gametrack/` (where its HUD puts things and the words it uses); the
+  tracker, the database, the notch and the page are shared.
+
 ## Accessibility
 
 *Accessibility* offers quick setups:
@@ -365,7 +425,7 @@ dev/run-debug.sh                        # run from source with logs and the wind
 Everywhere:
 
 ```
-uv run pytest -q                        # gestures, glass, notch, live activities, Quick nav, OBS, screen assist…
+uv run pytest -q                        # gestures, glass, notch, live activities, Quick nav, OBS, screen assist, game tracking…
 uv run python tools/render_dial.py out  # render rotary states to PNGs
 uv run python tools/render_notch.py out # render the notch's states to one PNG
 uv run python tools/render_tutorial.py out  # render every card of the first-run tour (--mouse: camera off)

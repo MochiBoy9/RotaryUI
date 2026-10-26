@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.4.0]
+
+### Added
+- **Active Game Tracking** (experimental, *Game tracking* page), for THE FINALS. While the game is in front,
+  RotaryUI reads its HUD off the screen a few times a second (the OCR built into Windows; never the game's
+  memory or files, so anti-cheat has nothing to object to) and keeps your eliminations, deaths, assists, revives
+  and team wipes, how far ahead or behind your team is, and what it takes to lead or to qualify. The stats you
+  pick stay small on the notch while you play; it opens by itself when you're eliminated and at the end of each
+  match, with a summary (Victory, a placement, the round you went out in) that stays until the next one. Made
+  for Season 12's HUD: it reads the killfeed (`Killer > Victim`) for your name (or learns it from under your
+  health), the kill headline and tally under the crosshair, the death bar and card, the teams' cash (your team by
+  its blue rank box, cash on its way to a cashout left out), and QUALIFIED and the other end-of-round banners,
+  ignoring look-alike markers in the world, and counts each thing once however many places and frames it shows
+  in. While you're out only the killfeed can add an elimination. Start and end matches, fix a count or
+  the result by hand from the notch or the page. Every match is kept in a local database, with totals and
+  *Export CSV…*. *Check what it sees* shows what it read. Needs the game in Borderless or Windowed mode.
+  It reads only the parts of the screen that can say something new (the death card while you're out, your
+  name until it's known), so it keeps up on modest PCs.
+
 ## [2.3.0]
 
 ### Added

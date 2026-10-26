@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QFileInfo, QPointF, QRectF, QSize, Qt, QTimer, Signal
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QCheckBox, QC
 from .. import (DATA_DIR, DEVICE, MAC, OS_NAME, ROOT, WIN, __version__, apps, integrations, keys, obs, system, update,
                winapi)
 from .. import agents
+from .. import gametrack
 from .. import assist as ai
 from .. import environment
 from ..actions import open_target
@@ -2559,6 +2561,366 @@ class AgentsPage(QWidget):
             self._note("")
 
 
+class GamesPage(QWidget):
+    """Active Game Tracking (experimental): THE FINALS' HUD read off the screen into stats on the notch and a
+    history of matches (gametrack/)."""
+
+    RESULTS = {"won": "Won", "lost": "Lost", "draw": "Draw", "left": "Left", "ended": "Ended", "place": ""}
+
+    def __init__(self, win: "MainWindow"):
+        super().__init__()
+        self.app = win.app
+        self.win = win
+        self.watch = self.app.game_watch
+        self._last_check = None
+        inner = QWidget()
+        v = QVBoxLayout(inner)
+        v.setContentsMargins(28, 24, 36, 32)
+        v.setSpacing(22)
+        v.addWidget(page_header("Game tracking", "Experimental. Watches your game the way you see it and keeps your "
+                                                 "stats: eliminations, deaths, assists, revives, how far ahead or "
+                                                 "behind your team is, and how each match ended. Shown on the "
+                                                 "notch, summed up at the end of every match, kept on this "
+                                                 f"{DEVICE}."))
+        g = gametrack.settings(self.app.cfg)
+        prof = gametrack.profile(self.app.cfg)
+
+        c = Card("Active Game Tracking", "It only reads the screen (like a stream viewer would), never the game's "
+                                         "memory or files, so anti-cheat has nothing to object to, and nothing "
+                                         "leaves this " + DEVICE + ". " + prof.notes)
+        self.enabled = Switch(bool(g["enabled"]))
+        c.add(Row("Track my games", f"Reads {prof.name}' HUD a few times a second while the game is in front",
+                  self.enabled))
+        self.game = QComboBox()
+        for key, pr in gametrack.GAMES.items():
+            self.game.addItem(pr.name, key)
+        c.add(Row("Game", "Only THE FINALS for now; more can follow", self.game))
+        self.auto = Switch(bool(g["auto_matches"]))
+        c.add(Row("Start and end matches by itself", "From the in-match HUD, the end-of-round screens and the "
+                                                     "menus. Off: start and end each match yourself", self.auto))
+        self.rate = Segmented([("2", "2×"), ("3", "3×"), ("5", "5×")], str(int(g["rate"])))
+        self.rate.setFixedWidth(200)
+        c.add(Row("Looks a second", "More catches more in a busy fight, and costs a little more", self.rate))
+        self.state = QLabel("")
+        self.state.setObjectName("value")
+        self.state.setWordWrap(True)
+        c.add(Row("Status", None, self.state))
+        v.addWidget(c)
+
+        c = Card("You", "With your name it reads the elimination feed too: you on the left of a line is your "
+                        "elimination, on the right your death. Without one it goes by the scoring tally and the "
+                        "death screen, which only show your own.")
+        self.names = QLineEdit(", ".join(g["names"]))
+        self.names.setPlaceholderText("Your name, as in the elimination feed")
+        self.names.setMinimumWidth(260)
+        c.add(Row("Your in-game name", "Your Embark ID without the #1234. More than one (a second account)? "
+                                       "Separate them with commas", self.names))
+        self.learn = Switch(bool(g["learn_name"]))
+        self.learn_row = c.add(Row("Work my name out by itself", "", self.learn))
+        v.addWidget(c)
+
+        c = Card("On the notch", f"Pick up to {gametrack.MAX_NOTCH_STATS}. Hover the notch during a match for all "
+                                 "of them, and to add or take away one by hand. Your team is found from your own "
+                                 "eliminations, so lead and behind show after your first.")
+        grid = QWidget()
+        gl = QGridLayout(grid)
+        gl.setContentsMargins(14, 10, 14, 10)
+        gl.setHorizontalSpacing(18)
+        gl.setVerticalSpacing(10)
+        self.checks: dict[str, QCheckBox] = {}
+        for i, (key, (label, _short)) in enumerate(gametrack.STAT_CHOICES.items()):
+            cb = QCheckBox(label)
+            cb.setChecked(key in g["notch_stats"])
+            cb.toggled.connect(lambda on, k=key: self._stat(k, on))
+            self.checks[key] = cb
+            gl.addWidget(cb, i // 3, i % 3)
+        c.add(grid)
+        self.over = Switch(bool(g["show_over_game"]))
+        c.add(Row("Keep it up over the game", "While a match is on (Borderless or Windowed; never over exclusive "
+                                              "full screen). The stats stay small while you play; it opens by "
+                                              "itself when you're eliminated and when the match ends", self.over))
+        v.addWidget(c)
+
+        c = Card("This match", "Everything can be done by hand: start a match, put a count right, end it with "
+                               "the result. The notch's menu (right-click) has the same.")
+        self.live = QLabel("")
+        self.live.setObjectName("value")
+        c.add(Row("Now", None, self.live))
+        bw = QWidget()
+        bh = QHBoxLayout(bw)
+        bh.setContentsMargins(0, 0, 0, 0)
+        self.mode = QComboBox()
+        self.mode.addItem("Mode: work it out", "")
+        for key, m in prof.modes.items():
+            self.mode.addItem(m.name, key)
+        self.start_btn = QPushButton("Start a match")
+        self.start_btn.clicked.connect(lambda: self.watch.start_match(self.mode.currentData() or ""))
+        self.end_btn = QPushButton("End it…")
+        self.end_btn.clicked.connect(self._end_menu)
+        self.mode.currentIndexChanged.connect(self._mode_changed)
+        bh.addWidget(self.mode)
+        bh.addWidget(self.start_btn)
+        bh.addWidget(self.end_btn)
+        c.add(Row("Match", None, bw))
+        adj = QWidget()
+        ag = QGridLayout(adj)
+        ag.setContentsMargins(14, 6, 14, 10)
+        ag.setHorizontalSpacing(8)
+        self.counts: dict[str, QLabel] = {}
+        for col, (stat, label) in enumerate((("kills", "Eliminations"), ("deaths", "Deaths"), ("assists", "Assists"),
+                                             ("revives", "Revives"))):
+            name = QLabel(label)
+            name.setObjectName("muted")
+            ag.addWidget(name, 0, col * 3, 1, 3)
+            minus = QPushButton("−")
+            minus.setFixedWidth(40)
+            minus.setStyleSheet("padding: 6px 0px;")
+            minus.setAccessibleName(f"One fewer {label.lower()}")
+            minus.clicked.connect(lambda _=False, st=stat: self.watch.adjust(st, -1))
+            num = QLabel("0")
+            num.setObjectName("value")
+            num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            num.setMinimumWidth(28)
+            plus = QPushButton("+")
+            plus.setFixedWidth(40)
+            plus.setStyleSheet("padding: 6px 0px;")
+            plus.setAccessibleName(f"One more {label.lower()[:-1]}")
+            plus.clicked.connect(lambda _=False, st=stat: self.watch.adjust(st, +1))
+            ag.addWidget(minus, 1, col * 3)
+            ag.addWidget(num, 1, col * 3 + 1)
+            ag.addWidget(plus, 1, col * 3 + 2)
+            self.counts[stat] = num
+        c.add(adj)
+        v.addWidget(c)
+
+        c = Card("History", f"Every match is kept on this {DEVICE} in {Path(self.watch.db_path).name} (in the "
+                            "settings folder).")
+        self.totals = QLabel("")
+        self.totals.setObjectName("value")
+        self.totals.setWordWrap(True)
+        c.add(Row("All matches", None, self.totals))
+        self.history = QLabel("")
+        self.history.setObjectName("muted")
+        self.history.setTextFormat(Qt.TextFormat.RichText)
+        self.history.setContentsMargins(14, 6, 14, 6)
+        self.history.setWordWrap(True)
+        c.add(self.history)
+        hw = QWidget()
+        hh = QHBoxLayout(hw)
+        hh.setContentsMargins(0, 0, 0, 0)
+        export = QPushButton("Export CSV…")
+        export.clicked.connect(self._export)
+        clear = QPushButton("Clear history")
+        clear.clicked.connect(self._clear)
+        hh.addWidget(export)
+        hh.addWidget(clear)
+        c.add(Row("Your data", None, hw))
+        v.addWidget(c)
+
+        c = Card("Check what it sees", "To check it can read your screen, or to see why something wasn't counted: "
+                                       "what it read in each part of the screen, and what it made of it.")
+        cw = QWidget()
+        ch = QHBoxLayout(cw)
+        ch.setContentsMargins(0, 0, 0, 0)
+        now_btn = QPushButton("Check the screen now")
+        now_btn.clicked.connect(self._check_now)
+        pic = QPushButton("Check a screenshot…")
+        pic.clicked.connect(self._check_file)
+        self.keep_btn = QPushButton("Save it")
+        self.keep_btn.setEnabled(False)
+        self.keep_btn.clicked.connect(self._keep)
+        ch.addWidget(now_btn)
+        ch.addWidget(pic)
+        ch.addWidget(self.keep_btn)
+        c.add(Row("Read the game once", f"With {prof.name} in front, tracking on or off", cw))
+        self.seen = QPlainTextEdit()
+        self.seen.setReadOnly(True)
+        self.seen.setMinimumHeight(180)
+        self.seen.setPlaceholderText("What it read shows here")
+        self.seen_wrap = QWidget()
+        sl = QVBoxLayout(self.seen_wrap)
+        sl.setContentsMargins(14, 4, 14, 10)
+        sl.addWidget(self.seen)
+        c.add(self.seen_wrap)
+        v.addWidget(c)
+        v.addStretch(1)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(scroll_page(inner))
+
+        self.enabled.toggled.connect(lambda on: self._set("enabled", on))
+        self.auto.toggled.connect(lambda on: self._set("auto_matches", on))
+        self.rate.changed.connect(lambda k: self._set("rate", int(k)))
+        self.names.editingFinished.connect(self._names)
+        self.learn.toggled.connect(lambda on: self._set("learn_name", on))
+        self.over.toggled.connect(lambda on: self._set("show_over_game", on))
+        self.game.currentIndexChanged.connect(lambda _i: self._set("game", self.game.currentData()))
+        self.watch.checked.connect(self._checked)
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self.refresh_live)
+        self.refresh()
+
+    # ------------------------------------------------------------------ settings
+    def _set(self, key: str, value) -> None:
+        self.app.cfg.setdefault("gametrack", {})[key] = value
+        self.app.apply_config()
+        self.refresh()
+
+    def _names(self) -> None:
+        names = [n.strip() for n in self.names.text().split(",") if n.strip()]
+        if names != gametrack.settings(self.app.cfg)["names"]:
+            self._set("names", names)
+
+    def _stat(self, key: str, on: bool) -> None:
+        keys = [k for k in gametrack.settings(self.app.cfg)["notch_stats"] if k != key]
+        if on:
+            keys.append(key)
+        self._set("notch_stats", keys[-gametrack.MAX_NOTCH_STATS:])
+
+    def _mode_changed(self) -> None:
+        if self.watch.tracker.match is not None and self.mode.currentData():
+            self.watch.set_mode(self.mode.currentData())
+
+    def _end_menu(self) -> None:
+        m = QMenu(self)
+        self.app.notch._game_end_menu(m)
+        m.exec(self.end_btn.mapToGlobal(self.end_btn.rect().bottomLeft()))
+
+    def _export(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Export your matches", str(Path.home() / "matches.csv"),
+                                              "CSV (*.csv)")
+        if path:
+            try:
+                n = self.watch.store.export_csv(gametrack.settings(self.app.cfg)["game"], Path(path))
+                self.history.setText(f"Exported {n} match{'es' if n != 1 else ''} to {path}")
+            except OSError as e:
+                self.history.setText(f"Couldn't export: {e}")
+
+    def _clear(self) -> None:
+        if QMessageBox.question(self, "Clear history", "Delete every match kept for this game? This can't be "
+                                                       "undone.") != QMessageBox.StandardButton.Yes:
+            return
+        self.watch.store.clear(gametrack.settings(self.app.cfg)["game"])
+        self.refresh()
+
+    # ------------------------------------------------------------------ checking
+    def _check_now(self) -> None:
+        self.seen.setPlainText("Looking…")
+        self.watch.check_now()
+
+    def _check_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Choose a screenshot of the game", str(Path.home()),
+                                              "Pictures (*.png *.jpg *.jpeg *.bmp)")
+        if path:
+            self.seen.setPlainText("Reading…")
+            self.watch.check_image(path)
+
+    def _checked(self, res: dict) -> None:
+        self._last_check = res
+        self.keep_btn.setEnabled("frame" in res)
+        if res.get("error"):
+            self.seen.setPlainText(res["error"])
+            return
+        lines = [f"Screen {res['size'][0]}×{res['size'][1]} · {self.watch.ocr_name}", ""]
+        for zone, rows in res["texts"].items():
+            lines.append(f"[{zone}]")
+            lines += [f"  {r}" for r in rows] or ["  (nothing)"]
+        lines += ["", "Made of it:"]
+        lines += [f"  {kind}" + (f" · {other}" if other else "") + (f" ×{n}" if n > 1 else "")
+                  for kind, other, n in res["obs"]] or ["  nothing to count"]
+        self.seen.setPlainText("\n".join(lines))
+
+    def _keep(self) -> None:
+        res = self._last_check or {}
+        if "frame" not in res:
+            return
+        from ..gametrack import capture
+        from ..gametrack.watcher import DEBUG_DIR
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        png = DEBUG_DIR / f"check-{stamp}.png"
+        ok = capture.save_png(res["frame"], str(png))
+        if ok:
+            (DEBUG_DIR / f"check-{stamp}.txt").write_text(self.seen.toPlainText(), encoding="utf-8")
+            self.seen.appendPlainText(f"\nSaved to {png}")
+
+    # ------------------------------------------------------------------ showing
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._timer.start()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self._timer.stop()
+
+    def refresh(self) -> None:
+        g = gametrack.settings(self.app.cfg)
+        self.enabled.set_silent(bool(g["enabled"]))
+        self.auto.set_silent(bool(g["auto_matches"]))
+        self.learn.set_silent(bool(g["learn_name"]))
+        self.over.set_silent(bool(g["show_over_game"]))
+        self.rate.set_value(str(int(g["rate"])))
+        full = len(g["notch_stats"]) >= gametrack.MAX_NOTCH_STATS
+        for key, cb in self.checks.items():
+            cb.blockSignals(True)
+            cb.setChecked(key in g["notch_stats"])
+            cb.setEnabled(cb.isChecked() or not full)
+            cb.blockSignals(False)
+        learned = g["learned_name"]
+        self.learn_row.subtitle.setText(
+            (f"Found: {learned}. " if learned else "") + "When the tally and the feed name the same player at the "
+            "same moment, the other name on that feed line is yours. Used while the name above is empty.")
+        game = g["game"]
+        totals = self.watch.store.totals(game)
+        if totals["matches"]:
+            self.totals.setText(f"{totals['matches']} matches · {totals['wins'] or 0} won · {totals['losses'] or 0} "
+                                f"lost · {totals['kills']} eliminations, {totals['deaths']} deaths, "
+                                f"{totals['assists']} assists, {totals['revives']} revives · K/D "
+                                f"{totals['kd']:.2f}")
+        else:
+            self.totals.setText("No matches yet")
+        rows = self.watch.store.recent(game, 10)
+        prof = gametrack.profile(self.app.cfg)
+        html = []
+        for r in rows:
+            when = time.strftime("%b %d, %H:%M", time.localtime(r["started"]))
+            mode = prof.modes[r["mode"]].name if r["mode"] in prof.modes else "Match"
+            res = self.RESULTS.get(r["result"], r["result"]) or (f"Placed {r['place']}" if r["place"] else "")
+            res += "?" if r["estimated"] else ""
+            html.append(f"{when} · <b>{mode}</b> · {res} · {r['kills']}/{r['deaths']}/{r['assists']} · "
+                        f"{r['revives']} revives · {gametrack.mmss(r['seconds'])}")
+        self.history.setText("<br>".join(html) if html else "")
+        self.history.setVisible(bool(html))
+        self.refresh_live()
+
+    def refresh_live(self) -> None:
+        w = self.watch
+        g = gametrack.settings(self.app.cfg)
+        extra = ""
+        if g["enabled"] and w.ocr_error:
+            extra = f" · {w.ocr_error}"
+        self.state.setText((w.status if g["enabled"] else "Off") + extra)
+        snap = w.snapshot()
+        m = w.tracker.match
+        if m is not None:
+            self.live.setText(f"{snap['mode'] or 'Match'} · {gametrack.mmss(snap['seconds'])} · {snap['line']}"
+                              + (" · down" if snap["dead"] else ""))
+        elif snap is not None:
+            self.live.setText(f"Last match: {snap['line']}" + (" (best guess)" if snap.get("estimated") else ""))
+        else:
+            self.live.setText("No match on" + (": it starts by itself when one does" if g["enabled"] and
+                                                g["auto_matches"] else ""))
+        self.end_btn.setEnabled(m is not None)
+        stats = w.live_stats()
+        for k, lab in self.counts.items():
+            lab.setText(str(stats.get(k, 0)))
+        if m is not None and self.mode.currentData() != m.mode:
+            i = self.mode.findData(m.mode)
+            self.mode.blockSignals(True)
+            self.mode.setCurrentIndex(max(0, i))
+            self.mode.blockSignals(False)
+
+
 class CameraPage(QWidget):
     def __init__(self, win: "MainWindow"):
         super().__init__()
@@ -3039,6 +3401,7 @@ SECTION_BLURBS = {
     "notch": "Mouse & keyboard, and the Dynamic Island",
     "assist": "Ask AI about what's on your screen",
     "agents": "Claude Code, Codex and other AI on the notch",
+    "games": "Your stats from THE FINALS, live on the notch",
     "accessibility": "Text size, contrast, motion and sound",
     "camera": "Which camera, and what it sees",
     "general": "Startup, appearance, fonts and updates",
@@ -3253,6 +3616,7 @@ class MainWindow(QWidget):
              ("gestures", "Controls", "E815", "#FF9F0A", "Rotary"),
              ("notch", "Notch", "E962", "#5E5CE6", "Features"), ("assist", "Screen assist", "E897", "#BF5AF2", "Features"),
              ("agents", "AI agents", "E8BD", "#5E5CE6", "Features"),
+             ("games", "Game tracking", "E7FC", "#FF6B3D", "Features"),
              ("accessibility", "Accessibility", "E776", "#30D158", "System"),
              ("camera", "Camera", "E722", "#64D2FF", "System"), ("general", "General", "E713", "#8E8E93", "System")]
 
@@ -3524,6 +3888,7 @@ class MainWindow(QWidget):
         self.notch = NotchPage(self)
         self.assist = AssistPage(self)
         self.agents = AgentsPage(self)
+        self.games = GamesPage(self)
         self.accessibility = AccessibilityPage(self)
         self.camera = CameraPage(self)
         self.general = GeneralPage(self)
@@ -3577,6 +3942,8 @@ class MainWindow(QWidget):
             self.assist.refresh()
         elif page is self.agents:
             self.agents.refresh()
+        elif page is self.games:
+            self.games.refresh()
         elif page is self.camera:
             self.camera.refresh()
         elif page is self.home:

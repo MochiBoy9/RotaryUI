@@ -1,6 +1,6 @@
 [project]
 name = "gesture-rotary"
-version = "2.3.0"
+version = "2.4.0"
 description = "Gesture-controlled rotary launcher driven by any webcam, or a notch at the top of the screen"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.txt", "licenses/*.txt"]
@@ -16,7 +16,10 @@ dependencies = [
     "winrt-runtime>=3.2.1; sys_platform == 'win32'",
     "winrt-windows-foundation>=3.2.1; sys_platform == 'win32'",
     "winrt-windows-foundation-collections>=3.2.1; sys_platform == 'win32'",
+    "winrt-windows-globalization>=3.2.1; sys_platform == 'win32'",
+    "winrt-windows-graphics-imaging>=3.2.1; sys_platform == 'win32'",
     "winrt-windows-media-control>=3.2.1; sys_platform == 'win32'",
+    "winrt-windows-media-ocr>=3.2.1; sys_platform == 'win32'",
     "winrt-windows-storage-streams>=3.2.1; sys_platform == 'win32'",
 ]
 

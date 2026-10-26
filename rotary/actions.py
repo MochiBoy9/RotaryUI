@@ -175,6 +175,19 @@ DEFAULT_CONFIG = {
         "flash": True,           # each new step slides in on the notch for a moment
         "proxies": {},           # name → base URL: more model services for the pass-through
     },
+    "gametrack": {               # Active Game Tracking (gametrack/): reads the game's HUD off the screen
+        "enabled": False,        # watching while the game is in front (experimental)
+        "game": "the_finals",    # the one game it knows for now: THE FINALS
+        "names": [],             # your in-game name(s): the elimination feed is read for them
+        "learn_name": True,      # or work it out from the feed and the tally
+        "learned_name": "",
+        "auto_matches": True,    # start and end matches from what's on screen
+        "rate": 3,               # looks a second
+        "notch_stats": ["kills", "deaths", "assists", "lead"],
+        "show_over_game": True,  # the notch stays up over a borderless game while a match is on
+        "zones": {},             # zone → [left, top, right, bottom], 0–1: where on the screen it reads
+        "words": {},             # more phrases to look for, per kind (e.g. another language's)
+    },
     "integrations": {"obs": {"host": "localhost", "port": 4455}},
     "camera": {
         "preferred": "",

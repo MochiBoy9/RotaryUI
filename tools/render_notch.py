@@ -143,6 +143,27 @@ frames.append(shot(n, bg))                                                     #
 n.hovered = True
 n._retarget()
 frames.append(shot(n, bg))                                                     # hover to answer it
+game = {"state": "playing", "game": "THE FINALS", "mode": "Quick Cash", "seconds": 312.0, "dead": False,   # game
+        "line": "K 5  D 2  A 1  +$2.5k", "round": 1, "final": False, "manual": False, "status": "Watching",
+        "tiles": [("Eliminations", "5"), ("Deaths", "2"), ("Assists", "1"), ("Lead or behind by", "+$2.5k"),
+                  ("Revives", "3")], "sure": True}
+n, bg = notch(False)
+n.set_game(game, True)
+frames.append(shot(n, bg))                                                     # a match on
+n.hovered = True
+n._retarget()
+frames.append(shot(n, bg))                                                     # hover: still just the stats
+n.hovered = False
+n.set_game({**game, "dead": True, "killer": "SweetSpicySalty"}, True)
+frames.append(shot(n, bg))                                                     # eliminated: it opens
+n.set_game({"state": "ended", "game": "THE FINALS", "mode": "Cashout", "seconds": 1310.0, "result": "lost",
+            "headline": "Out · 3rd–4th", "estimated": True, "line": "Out · 3rd–4th · 7/4/2",
+            "tiles": [("Eliminations", "7"), ("Deaths", "4"), ("Assists", "2"), ("Revives", "1"),
+                      ("K/D ratio", "1.75"), ("Match time", "21:50")], "status": "Watching"}, True)
+frames.append(shot(n, bg))                                                     # the match is over
+n.hovered = True
+n._retarget()
+frames.append(shot(n, bg))                                                     # hover: the summary
 W = max(f.width() for f in frames)
 H = sum(f.height() + 4 for f in frames)
 sheet = QImage(W, H, QImage.Format.Format_RGB32)
