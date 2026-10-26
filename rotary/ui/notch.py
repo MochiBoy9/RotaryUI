@@ -23,6 +23,10 @@ AI agents (Claude Code, Codex, a local model… see agents.py) show while they w
 and how long it's been at it. Each new step it moves on to slides in for a moment ("Claude Code · Writing the
 tests"); hover for every agent and what it's doing right now. When one has a question, the notch says so with an
 amber "?" — hover it to answer: its options as buttons, or Reply… to type an answer.
+
+Active Game Tracking (see rotary/gametrack) puts your match on it: a crosshair and the stats you picked
+("K 5  D 2  A 1  +$2.5k"), each elimination or death sliding in for a moment, and on hover every stat with
+buttons to fix one by hand or end the match. When a match ends its summary stays until the next one starts.
 """
 from __future__ import annotations
 
@@ -55,6 +59,8 @@ HOVER_HINT = "Click to open wheel"
 HOVER_HINT_SECONDS = 0.9           # a hover this long, with nothing else on the notch, shows the hint
 AGENT_FLASH_SECONDS = 4.0          # an agent's new step stays on the notch this long
 AGENT_ROWS = 3                     # agents listed on the hover card
+GAME_FLASH_SECONDS = 2.6           # an elimination, a death… stays on the notch this long
+GAME_COLOR, GAME_DEAD, GAME_GOLD = "#FF6B3D", "#FF453A", "#FFD60A"
 EDGES = ("top", "bottom", "left", "right")
 AWAY = {"top": (0, 1), "bottom": (0, -1), "left": (1, 0), "right": (-1, 0)}   # from each edge into the screen
 
@@ -101,6 +107,7 @@ class NotchWindow(QWidget):
     assist = Signal()                # "Solve what's on screen" from its menu
     assist_note = Signal()           # "Ask with a note…": the same, with a line of context first
     agent_answer = Signal(str, object, bool)     # (question id, the answer — None: put away, typed)
+    game_command = Signal(str, object)           # Active Game Tracking: ("add", "kills"), ("end", "won"), …
 
     # Base geometry in logical px at the default text size: (width, height, bottom corner radius).
     COLLAPSED = (188.0, 30.0, 13.0)
@@ -114,6 +121,7 @@ class NotchWindow(QWidget):
     ANSWER_CARD = (500.0, 300.0, 28.0)   # width, tallest, radius (the height follows the text)
     QUESTION_CARD = (500.0, 320.0, 28.0)
     AGENTS_CARD = (440.0, 0.0, 28.0)     # the height follows the number of agents
+    GAME_CARD = (460.0, 0.0, 28.0)       # the height follows the stats shown
     MAX_W = 560.0
     MARGIN = 14.0
     SHOULDER = 8.0
@@ -178,6 +186,11 @@ class NotchWindow(QWidget):
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._flash_over)
         self.reply_box: ReplyBox | None = None
+        self._flash_kind = "agent"       # whose news is sliding in: an agent's or the game's
+        # Active Game Tracking: the match on now, or the last one's summary (GameWatcher.snapshot())
+        self.game: dict | None = None
+        self.game_enabled = False        # tracking is on (the menu offers to turn it on or off)
+        self.game_modes: list[tuple[str, str]] = []     # (key, name) to start a match in, from the menu
         self.hint_ready = False          # hovered long enough for "Click to open wheel"
         self._hint_timer = QTimer(self)
         self._hint_timer.setSingleShot(True)
@@ -589,11 +602,13 @@ class NotchWindow(QWidget):
             self.fade.target = 1.0
         self._retarget()
 
-    def _flash(self, text: str) -> None:
+    def _flash(self, text: str, kind: str = "agent") -> None:
+        seconds = GAME_FLASH_SECONDS if kind == "game" else AGENT_FLASH_SECONDS
         self._prev_text = self._shown_text()
         self._flash_text = text
-        self._flash_until = time.monotonic() + AGENT_FLASH_SECONDS
-        self._flash_timer.start(int(AGENT_FLASH_SECONDS * 1000) + 30)
+        self._flash_kind = kind
+        self._flash_until = time.monotonic() + seconds
+        self._flash_timer.start(int(seconds * 1000) + 30)
         self.fade.snap(0.0)
         self.fade.target = 1.0
 
@@ -657,6 +672,24 @@ class NotchWindow(QWidget):
         rank = {"waiting": 0, "working": 1}
         return min(busy, key=lambda s: rank.get(s.state, 2), default=None)
 
+    # -- Active Game Tracking
+    def set_game(self, snap: dict | None, enabled: bool = False) -> None:
+        """The match on now (or the last one's summary), as GameWatcher.snapshot() describes it."""
+        self.game_enabled = bool(enabled)
+        if snap != self.game:
+            self.game = snap
+            self._retarget()
+
+    def game_flash(self, text: str) -> None:
+        """An elimination, a death, a match ending: slides in for a moment (not over a question)."""
+        if text and self.question() is None and self.answer is None:
+            self._flash(text, "game")
+            self._retarget()
+
+    def _game_cmd(self, cmd: str, arg=None) -> None:
+        self._hover_button = ""
+        self.game_command.emit(cmd, arg)
+
     # ------------------------------------------------------------------ what to show
     def incoming(self) -> tuple[str, str] | None:
         """A call ringing in that hasn't been put away: (app, who — "" if unknown)."""
@@ -696,6 +729,8 @@ class NotchWindow(QWidget):
             return "call"
         if self.timer_end is not None:
             return "timer"
+        if self.game is not None:
+            return "game"
         if self.lead_agent() is not None:
             return "agent"
         if self.opts["clips"] and self.live.clipping:
@@ -735,12 +770,13 @@ class NotchWindow(QWidget):
         act = self.activity()
         if act == "agent":
             return "agents"
-        return act if act in ("media", "timer", "call") else ""
+        return act if act in ("media", "timer", "call", "game") else ""
 
     # ------------------------------------------------------------------ geometry
     def _resize_window(self) -> None:
         w = int(math.ceil((self.MAX_W + 2 * self.MARGIN) * self.s))
-        tallest = max(self.MEDIA_CARD[1], self.ANSWER_CARD[1], self.QUESTION_CARD[1], self._agents_card_h(AGENT_ROWS))
+        tallest = max(self.MEDIA_CARD[1], self.ANSWER_CARD[1], self.QUESTION_CARD[1], self._agents_card_h(AGENT_ROWS),
+                      self._game_card_h(6, True))
         h = int(math.ceil((tallest + self.MARGIN + self.FLOAT_PAD) * self.s))
         if (w, h) != (self.width(), self.height()):
             self.resize(w, h)
@@ -793,6 +829,8 @@ class NotchWindow(QWidget):
             side = max(46 * s, self._text_width("Ringing", 12.5) + 14 * s)
         elif act == "agent":
             side = max(46 * s, self._text_width(self._agent_side(), 12.5) + 14 * s)
+        elif act == "game":
+            side = max(46 * s, self._text_width(self.game.get("line", ""), 12.5) + 14 * s)
         elif act == "call":
             side = max(46 * s, self._text_width(mmss(self.call_seconds()), 12.5) + 14 * s)
         elif act in ("media", "clip"):
@@ -836,6 +874,10 @@ class NotchWindow(QWidget):
         if card == "agents":
             w, _h, r = self.AGENTS_CARD
             return w * s, self._agents_card_h(len(self._listed_agents())) * s, r * s, 1.0
+        if card == "game":
+            w, _h, r = self.GAME_CARD
+            g = self.game or {}
+            return w * s, self._game_card_h(len(g.get("tiles", [])), g.get("state") == "ended") * s, r * s, 1.0
         if self.question() is not None and card != "incoming":
             h = self.STATUS_H * s
             w = 44 * s + self._text_width(self.question_headline()) + 22
@@ -1078,7 +1120,8 @@ class NotchWindow(QWidget):
         if self._declined is not None and self.live.incoming != self._declined:
             self._declined = None            # that call stopped ringing: the next one shows again
         key = (f"{self._clock()}|{mmss(self.timer_left()) if self.timer_end else ''}|"
-               f"{mmss(self.call_seconds()) if self.live.call else ''}|{self._agent_side()}|{self.activity()}")
+               f"{mmss(self.call_seconds()) if self.live.call else ''}|{self._agent_side()}|{self.activity()}|"
+               f"{(self.game or {}).get('line', '')}")
         if key != self._clock_key:
             self._clock_key = key
             self._retarget()
@@ -1271,6 +1314,8 @@ class NotchWindow(QWidget):
                 self._paint_question_card(p, rect)
             elif kind == "agents":
                 self._paint_agents_card(p, rect)
+            elif kind == "game":
+                self._paint_game_card(p, rect)
         p.restore()
 
     _last_card = ""
@@ -1307,6 +1352,8 @@ class NotchWindow(QWidget):
             ic = QPointF(rect.left() + 20 * s, cy)
             if self.status_text or self.status_progress is not None:
                 self._indicator(p, ic)
+            elif self._flash_kind == "game" and (self.flash_text() or (self._prev_text and not text)):
+                self._game_icon(p, ic, 9 * s)
             elif self.flash_text() or (self._prev_text and not text and self.lead_agent() is not None):
                 self._agent_icon(p, ic, self.lead_agent(), 9 * s)
             elif self.activity() == "clip":
@@ -1403,6 +1450,14 @@ class NotchWindow(QWidget):
             p.setFont(tf)
             p.setPen(qcolor(self._agent_color(ag), 1.0))
             t = self._agent_side()
+            p.drawText(QRectF(right - tfm.horizontalAdvance(t) - 2, rect.top(), tfm.horizontalAdvance(t) + 4,
+                              rect.height()), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, t)
+        elif act == "game":
+            self._game_icon(p, lead, 9 * s)
+            tf, tfm = self._font("text", 12.5 * self.k, QFont.Weight.DemiBold)
+            p.setFont(tf)
+            p.setPen(QColor(self._game_color()))
+            t = self.game.get("line", "")
             p.drawText(QRectF(right - tfm.horizontalAdvance(t) - 2, rect.top(), tfm.horizontalAdvance(t) + 4,
                               rect.height()), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, t)
         elif act == "clip":
@@ -1715,6 +1770,156 @@ class NotchWindow(QWidget):
             p.drawText(QRectF(right - sw, cy - tfm.height() + 1 * s, sw, tfm.height()),
                        Qt.AlignmentFlag.AlignRight, side)
             y += 48 * s
+
+    # -- Active Game Tracking
+    def _game_color(self) -> str:
+        g = self.game or {}
+        if g.get("state") == "ended":
+            return {"won": GREEN, "lost": RED}.get(g.get("result"), GAME_GOLD)
+        return GAME_DEAD if g.get("dead") else GAME_COLOR
+
+    def _game_icon(self, p: QPainter, c: QPointF, rr: float) -> None:
+        """A crosshair: orange in a match, red while you're down, the result's colour after it."""
+        s = self.s
+        col = QColor(self._game_color())
+        g = self.game or {}
+        if g.get("state") == "ended":
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(col)
+            p.drawEllipse(c, rr, rr)
+            p.setFont(self._font("icons", rr * 1.05, QFont.Weight.Bold)[0])
+            p.setPen(white(1.0))
+            p.drawText(QRectF(c.x() - rr, c.y() - rr, 2 * rr, 2 * rr), Qt.AlignmentFlag.AlignCenter,
+                       G_CHECK if g.get("result") == "won" else ("" if g.get("result") != "lost" else G_CLOSE))
+            return
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(col, 1.8 * s))
+        p.drawEllipse(c, rr - 2 * s, rr - 2 * s)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            p.drawLine(QPointF(c.x() + dx * (rr - 5 * s), c.y() + dy * (rr - 5 * s)),
+                       QPointF(c.x() + dx * (rr + 0.5 * s), c.y() + dy * (rr + 0.5 * s)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(col)
+        p.drawEllipse(c, 1.6 * s, 1.6 * s)
+
+    @staticmethod
+    def _game_card_h(tiles: int, ended: bool) -> float:
+        rows = max(1, (tiles + 2) // 3)
+        return 14.0 + 20.0 + (34.0 if ended else 0.0) + 46.0 * rows + 10.0 + 30.0 + 14.0
+
+    def _game_buttons(self) -> list[tuple[str, str]]:
+        g = self.game or {}
+        if g.get("state") == "ended":
+            fix = [("g_fix_won", "It was a win"), ("g_fix_lost", "It was a loss")] if g.get("estimated") else []
+            return fix + [("g_next", "New match"), ("g_dismiss", "Dismiss")]
+        return [("g_add_kills", "+ Elim"), ("g_add_deaths", "+ Death"), ("g_add_assists", "+ Assist"),
+                ("g_add_revives", "+ Revive"), ("g_end", "End…")]
+
+    def _paint_game_card(self, p: QPainter, rect: QRectF) -> None:
+        g = self.game
+        if g is None:
+            return
+        self._last_card = "game"
+        s = self.s
+        x, right = rect.left() + 18 * s, rect.right() - 18 * s
+        y = rect.top() + 14 * s
+        hf, hfm = self._font("text", 12 * self.k, QFont.Weight.DemiBold)
+        self._game_icon(p, QPointF(x + 7 * s, y + 9 * s), 7.5 * s)
+        head = " · ".join(t for t in (g.get("game", ""), g.get("mode", ""), mmss(g.get("seconds", 0))) if t)
+        if g.get("state") == "playing":
+            side = "Down" if g.get("dead") else ("Final round" if g.get("final") else
+                                                  (f"Round {g['round']}" if g.get("round", 1) > 1 else ""))
+        else:
+            side = "Best guess: check it" if g.get("estimated") else "Waiting for the next game"
+        sw = hfm.horizontalAdvance(side) + 4 if side else 0
+        p.setFont(hf)
+        p.setPen(white(0.62))
+        hx = x + 22 * s
+        p.drawText(QRectF(hx, y, right - sw - 8 * s - hx, hfm.height()), Qt.AlignmentFlag.AlignLeft,
+                   hfm.elidedText(head, Qt.TextElideMode.ElideRight, right - sw - 8 * s - hx))
+        if side:
+            p.setPen(QColor(GAME_DEAD if g.get("dead") else (AMBER if g.get("estimated") else GRAY)))
+            p.drawText(QRectF(right - sw, y, sw, hfm.height()), Qt.AlignmentFlag.AlignRight, side)
+        y += 20 * s
+        if g.get("state") == "ended":
+            bf, bfm = self._font("text", 20 * self.k, QFont.Weight.Bold)
+            p.setFont(bf)
+            p.setPen(QColor(self._game_color()))
+            p.drawText(QRectF(x, y, right - x, 30 * s), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       bfm.elidedText(g.get("headline", "Match over"), Qt.TextElideMode.ElideRight, right - x))
+            y += 34 * s
+        tiles = g.get("tiles", [])
+        cw = (right - x) / 3
+        vf, vfm = self._font("text", 18 * self.k, QFont.Weight.Bold)
+        lf, lfm = self._font("text", 11 * self.k, QFont.Weight.Normal)
+        for i, (label, value) in enumerate(tiles):
+            tx, ty = x + (i % 3) * cw, y + (i // 3) * 46 * s
+            p.setFont(vf)
+            p.setPen(white(0.97))
+            p.drawText(QRectF(tx, ty, cw - 6 * s, vfm.height()), Qt.AlignmentFlag.AlignLeft,
+                       vfm.elidedText(value, Qt.TextElideMode.ElideRight, cw - 6 * s))
+            p.setFont(lf)
+            p.setPen(white(0.55))
+            p.drawText(QRectF(tx, ty + vfm.height(), cw - 6 * s, lfm.height()), Qt.AlignmentFlag.AlignLeft,
+                       lfm.elidedText(label, Qt.TextElideMode.ElideRight, cw - 6 * s))
+        y += 46 * s * max(1, (len(tiles) + 2) // 3) + 10 * s
+        buttons = self._game_buttons()
+        gap = 6 * s
+        bw = (right - x - gap * (len(buttons) - 1)) / max(1, len(buttons))
+        bf12 = self._font("text", 12 * self.k, QFont.Weight.DemiBold)[1]
+        for i, (key, label) in enumerate(buttons):
+            br = QRectF(x + i * (bw + gap), y, bw, 30 * s)
+            if br.bottom() > rect.bottom() - 4 * s:
+                break                                # the card is still growing
+            tint = BLUE if key == "g_next" else ""
+            self._button(p, key, br, "", text=bf12.elidedText(label, Qt.TextElideMode.ElideRight, bw - 10 * s),
+                         tint=tint)
+
+    def _game_end_menu(self, m: QMenu | None = None) -> QMenu:
+        """How the match ended, for End…: a result, a placement, or just stop."""
+        menu = m or QMenu()
+        menu.addAction("We won", lambda: self._game_cmd("end", ("won", 0)))
+        menu.addAction("We lost", lambda: self._game_cmd("end", ("lost", 0)))
+        for n in (2, 3, 4):
+            menu.addAction(f"We came {('', '', '2nd', '3rd', '4th')[n]}", lambda n=n: self._game_cmd("end", ("place", n)))
+        menu.addAction("Draw", lambda: self._game_cmd("end", ("draw", 0)))
+        menu.addAction("Just end it", lambda: self._game_cmd("end", ("ended", 0)))
+        return menu
+
+    def _game_menu(self, m: QMenu) -> None:
+        """Active Game Tracking in the notch's menu: everything there is to do by hand."""
+        t = m.addMenu("Game tracking")
+        g = self.game or {}
+        if g.get("state") == "playing":
+            for stat, label in (("kills", "elimination"), ("deaths", "death"), ("assists", "assist"),
+                                ("revives", "revive")):
+                t.addAction(f"Add an {label}" if label[0] in "aeiou" else f"Add a {label}",
+                            lambda st=stat: self._game_cmd("add", st))
+            sub = t.addMenu("Take one away")
+            for stat, label in (("kills", "Elimination"), ("deaths", "Death"), ("assists", "Assist"),
+                                ("revives", "Revive")):
+                sub.addAction(label, lambda st=stat: self._game_cmd("remove", st))
+            self._game_end_menu(t.addMenu("End the match"))
+        else:
+            if self.game_modes:
+                sm = t.addMenu("Start a match")
+                for key, name in self.game_modes:
+                    sm.addAction(name, lambda k=key: self._game_cmd("start", k))
+                sm.addAction("Some other mode", lambda: self._game_cmd("start", ""))
+            else:
+                t.addAction("Start a match", lambda: self._game_cmd("start", ""))
+            if g.get("state") == "ended":
+                fix = t.addMenu("That match was…")
+                fix.addAction("A win", lambda: self._game_cmd("fix", ("won", 0)))
+                fix.addAction("A loss", lambda: self._game_cmd("fix", ("lost", 0)))
+                for n in (2, 3, 4):
+                    fix.addAction(f"{('', '', '2nd', '3rd', '4th')[n]} place",
+                                  lambda n=n: self._game_cmd("fix", ("place", n)))
+                t.addAction("Dismiss the summary", lambda: self._game_cmd("dismiss"))
+        t.addSeparator()
+        t.addAction("Stop tracking" if self.game_enabled else "Start tracking",
+                    lambda: self._game_cmd("enable", not self.game_enabled))
+        t.addAction("Game tracking settings…", lambda: self._game_cmd("settings"))
 
     def _question_layout(self, w: float) -> dict:
         """The question card for a body `w` wide: where everything goes (offsets from its top-left) and its height."""
@@ -2053,6 +2258,21 @@ class NotchWindow(QWidget):
         if b == "q_close":
             self.answer_question(None)               # the agent asks the usual way instead
             return
+        if b.startswith("g_add_"):
+            self._game_cmd("add", b[6:])
+            return
+        if b == "g_end":
+            self._game_end_menu().exec(QCursor.pos())
+            return
+        if b in ("g_fix_won", "g_fix_lost"):
+            self._game_cmd("fix", (b[6:], 0))
+            return
+        if b == "g_next":
+            self._game_cmd("start", "")
+            return
+        if b == "g_dismiss":
+            self._game_cmd("dismiss")
+            return
         # a click or the start of a drag: which one is decided when it moves or lets go
         g = ev.globalPosition()
         self._vel = self._glide = None
@@ -2120,6 +2340,8 @@ class NotchWindow(QWidget):
         if self.answer is not None:
             m.addAction("Copy the answer", self.copy_answer)
             m.addAction("Dismiss the answer", self.clear_answer)
+        m.addSeparator()
+        self._game_menu(m)
         t = m.addMenu("Timer")
         if self.timer_end is not None:
             t.addAction(f"{mmss(self.timer_left())} left — add 1 minute", lambda: self.add_time(60))

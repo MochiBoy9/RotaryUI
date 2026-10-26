@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Active Game Tracking** (experimental, *Game tracking* page), for THE FINALS. While the game is in front,
+  RotaryUI reads its HUD off the screen a few times a second (the OCR built into Windows; never the game's
+  memory or files, so anti-cheat has nothing to object to) and keeps your eliminations, deaths, assists, revives
+  and team wipes, how far ahead or behind your team is, and what it takes to lead or to qualify. The stats you
+  pick show on the notch, each elimination or death slides in, and a summary (Victory, Defeat, a placement, the
+  round you went out in) stays at the end of each match until the next one. It reads the elimination feed for
+  your name (or learns it), the crosshair tally, the death screen, the scoreboard and the end-of-round banners,
+  and counts each thing once however many places and frames it shows in. Start and end matches, fix a count or
+  the result by hand from the notch or the page. Every match is kept in a local database, with totals and
+  *Export CSV…*. *Check what it sees* shows what it read. Needs the game in Borderless or Windowed mode.
+
 ## [2.3.0]
 
 ### Added

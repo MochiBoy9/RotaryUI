@@ -26,6 +26,8 @@ from . import (DATA_DIR, LINUX, T0, WIN, __version__, agents, assist, environmen
 from .actions import (CONFIG_PATH, Item, back_item, build_items, cleanup_scripts, execute, item_from, load_config,
                       save_config)
 from .feedback import Sounds, Speaker
+from . import gametrack
+from .gametrack.watcher import GameWatcher
 from .live import LiveWatcher
 from .mouse import MouseTrigger
 from .resize import TwoHandResize, WindowSizer
@@ -390,6 +392,11 @@ class RotaryApp(QObject):
         self._agents_timer.setInterval(60_000)
         self._agents_timer.timeout.connect(self._on_agents_changed)
         self._agents_timer.start()
+        # Active Game Tracking: reads the game's HUD off the screen; the notch shows the match
+        self.game_watch = GameWatcher(lambda: self.cfg, self)
+        self.game_watch.changed.connect(self._on_game_changed)
+        self.game_watch.event.connect(self._on_game_event)
+        self.notch.game_command.connect(self._on_game_command)
         self.live = LiveWatcher(self)
         self.live.state.connect(self.notch.set_live)
         self.live.state.connect(self._on_live_state)
@@ -790,6 +797,8 @@ class RotaryApp(QObject):
         self.mouse_trigger.configure(gen.get("mouse_button", "middle"), gen.get("mouse_select", "off"),
                                      gen.get("mouse_close", "off"))
         self._apply_agents()
+        self.notch.game_modes = [(m.key, m.name) for m in gametrack.profile(self.cfg).modes.values()]
+        self.game_watch.apply()
         self._register_hotkey()
         self._update_notch()
         self._update_pill()
@@ -824,6 +833,70 @@ class RotaryApp(QObject):
                 self.sounds.play("confirm")
                 self._say(f"{questions[0].agent} has a question")
             self._update_notch()
+
+    # ------------------------------------------------------------ Active Game Tracking
+    def _game_snapshot(self) -> dict | None:
+        return self.game_watch.snapshot() if self.game_watch.enabled or self.game_watch.tracker.match else None
+
+    def _on_game_changed(self) -> None:
+        had = self.notch.game is not None
+        self.notch.set_game(self._game_snapshot(), self.game_watch.enabled)
+        if had != (self.notch.game is not None):
+            self._update_notch()
+        page = self.window.page("games")
+        if page is not None and page.isVisible():
+            page.refresh_live()
+
+    def _on_game_event(self, e) -> None:
+        """An elimination, a death, a match starting or ending: a moment on the notch."""
+        if not gametrack.settings(self.cfg)["flash"] or (e.kind == "stat" and e.text == "Changed by hand"):
+            return
+        who = f" · {e.text}" if e.text else ""
+        text = ""
+        if e.kind == "stat":
+            text = {"kills": f"Elimination{who}", "deaths": f"Eliminated{' by ' + e.text if e.text else ''}",
+                    "assists": "Assist", "revives": f"Revive{who}", "wipes": "Team wipe",
+                    "revived": f"Revived{' by ' + e.text if e.text else ''}"}.get(e.stat, "")
+        elif e.kind == "match_start":
+            text = f"Tracking {e.text or gametrack.profile(self.cfg).name}"
+        elif e.kind == "match_end":
+            snap = self.game_watch.snapshot()
+            text = snap["line"] if snap else "Match over"
+            self.sounds.play("confirm")
+        elif e.kind == "round":
+            text = e.text
+        elif e.kind == "name":
+            text = f"Reading the feed for {e.text}"
+        if text:
+            if self._fullscreen and self.notch.isHidden() and self._fs_state == 2:
+                self._alert_until = time.monotonic() + 3.0      # pop up over a borderless game for a moment
+                self._update_notch()
+                QTimer.singleShot(3300, self._update_notch)
+            self.notch.game_flash(text)
+
+    def _on_game_command(self, cmd: str, arg) -> None:
+        w = self.game_watch
+        if cmd == "add":
+            w.adjust(arg, +1)
+        elif cmd == "remove":
+            w.adjust(arg, -1)
+        elif cmd == "end":
+            w.end_match(*arg)
+        elif cmd == "fix":
+            w.fix_result(*arg)
+        elif cmd == "start":
+            w.start_match(arg or "")
+        elif cmd == "dismiss":
+            w.dismiss_summary()
+        elif cmd == "enable":
+            self.cfg.setdefault("gametrack", {})["enabled"] = bool(arg)
+            self.apply_config()
+        elif cmd == "settings":
+            self.show_window("games")
+
+    def _game_over_game(self) -> bool:
+        """A match is on and should stay on the notch over the (borderless) game."""
+        return self.notch.game is not None and bool(gametrack.settings(self.cfg)["show_over_game"])
 
     def reload_config(self) -> None:
         """config.json was edited outside the app."""
@@ -1228,6 +1301,8 @@ class RotaryApp(QObject):
             return False
         if mode == "on" or self._assist_showing() or self._ringing is not None or self._asking:
             return True
+        if self.notch.game is not None:
+            return True                  # Active Game Tracking: the match's stats
         # auto: when there's no camera to use (switched off, or none found for a few seconds)
         return self._no_cam_since is not None and time.monotonic() - self._no_cam_since > 4.0
 
@@ -1239,6 +1314,8 @@ class RotaryApp(QObject):
         if ((self._ringing is not None or self._asking) and self._fs_state != 3
                 and self.cfg.get("island", {}).get("alerts_over_games", True)):
             alert = True
+        if self._game_over_game() and self._fs_state != 3:
+            alert = True                 # the match's stats stay up over a borderless game
         show = wanted and (alert or not (self._fullscreen and gen.get("notch_hide_fullscreen", True)))
         # The live activities keep watching while a game hides the notch, so a saved clip can still pop up. With
         # the notch away (the camera's in use), they still listen for a call ringing in.
@@ -2188,6 +2265,7 @@ class RotaryApp(QObject):
 
     def _shutdown(self) -> None:
         self.agent_bridge.stop()
+        self.game_watch.stop()
         if self.tour is not None:            # quit mid-tour: it picks up again next time (tutorial_done stays false)
             import shiboken6
             self.tour.finished.disconnect()
