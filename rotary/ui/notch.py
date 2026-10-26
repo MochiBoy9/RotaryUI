@@ -83,6 +83,7 @@ def mmss(seconds: float) -> str:
 
 class NotchWindow(QWidget):
     clicked = Signal()               # open the rotary
+    approached = Signal()            # the pointer came onto the notch: a click may follow
     scrolled = Signal(int)           # wheel steps over the notch (+1 = next item)
     media_command = Signal(str)      # "play_pause" | "next" | "previous"
     timer_done = Signal()
@@ -1571,6 +1572,7 @@ class NotchWindow(QWidget):
     def enterEvent(self, ev) -> None:
         if not self.hovered:
             self.hovered = True
+            self.approached.emit()
             self.hint_ready = False
             self._hint_timer.start(int(HOVER_HINT_SECONDS * 1000))
             if not self.status_text and not self._card_kind():

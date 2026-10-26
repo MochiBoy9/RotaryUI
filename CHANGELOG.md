@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **The notch opens the slides and video rings for mouse users too.** Clicking or scrolling on the notch over a
+  slideshow or a video now opens that app's slides or video ring straight away, as an open hand over it does,
+  instead of the usual ring of items. The notch notes which app you're in as the pointer reaches it, so a click
+  that brings RotaryUI forward (macOS, Linux) or opening it from the notch's menu can't hide the app from it.
+
 ## [2.2.3]
 
 ### Changed

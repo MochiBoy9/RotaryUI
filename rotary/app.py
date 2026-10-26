@@ -66,6 +66,7 @@ def fullscreen_app_running() -> bool:
 
 # --------------------------------------------------------------------------- global hotkeys
 MOD_NOREPEAT = 0x4000
+FRONT_SECONDS = 30.0               # what the notch saw in front is trusted this long (another app may come up)
 VIDEO_TICKS = 120                  # a video ring is this many steps long: one full turn, start to end
 SLIDES_TINT, VIDEO_TINT, VOLUME_TINT = "#FF9F0A", "#FF375F", "#0A84FF"
 VOLUME_TICKS = 25                  # a volume ring: a full turn from silent to full, 4 % a click
@@ -364,6 +365,7 @@ class RotaryApp(QObject):
         self.pill = PillWindow()
         self.notch = NotchWindow()
         self.notch.clicked.connect(self._on_notch_click)
+        self.notch.approached.connect(self._on_notch_approach)
         self.notch.scrolled.connect(self._on_notch_scroll)
         self.notch.customize.connect(lambda: self.show_window("notch"))
         self.notch.timer_done.connect(self._on_timer_done)
@@ -401,6 +403,8 @@ class RotaryApp(QObject):
         self._main_sel = 0                 # where the item ring was, to go back to it
         self._mode_moved = 0.0             # last time the user turned a mode ring
         self._mode_n = 1
+        self._front: tuple[float, modes.Context] | None = None   # in front as the pointer reached the notch
+        self._open_ctx: modes.Context | None = None              # …handed to the open it led to
         self._slides: tuple[int, int] | None = None   # (current, count) once the app has said
         self._np = None                    # the video: NowPlaying from the media controls
         self._np_read = 0.0
@@ -974,15 +978,30 @@ class RotaryApp(QObject):
             self.dial.set_state(self.engine.snapshot())
 
     # ------------------------------------------------------------ notch & mouse
+    def _on_notch_approach(self) -> None:
+        """The pointer reached the notch: note what's in front now, while it's surely the user's app (a click
+        or the notch's menu could bring this app forward on macOS and Linux), and so a click opens straight
+        into that app's slides or video ring, as an open hand over it does."""
+        self._front = None
+        if self.engine.phase != Phase.IDLE:
+            return
+        self._mode_exec.submit(lambda: self.mode_data.emit(0, "front", self._detect_context()))
+
+    def _notch_open(self) -> None:
+        front, self._front = self._front, None
+        self._open_ctx = front[1] if front and time.monotonic() - front[0] < FRONT_SECONDS else None
+        self.open_manual()
+        self._open_ctx = None
+
     def _on_notch_click(self) -> None:
         if self.engine.phase == Phase.OPEN:
             self._close_manual("notch")
         else:
-            self.open_manual()
+            self._notch_open()
 
     def _on_notch_scroll(self, steps: int) -> None:
         if self.engine.phase != Phase.OPEN:
-            self.open_manual()
+            self._notch_open()
         elif self.keyboard_session:
             self._handle(self.engine.key_step(-steps if self.mode == "volume" else steps, time.monotonic()))
             self.dial.set_state(self.engine.snapshot())
@@ -1418,12 +1437,15 @@ class RotaryApp(QObject):
 
     def _watch_context(self) -> bool:
         """Open as a slides / video ring if that's what's in front. True if it stays the item ring (for now).
-        On Windows this is instant; elsewhere asking can take a moment, so the ring switches when it knows."""
+        On Windows this is instant; elsewhere asking can take a moment, so the ring switches when it knows.
+        Opened from the notch, what was in front as the pointer reached it counts too (see _on_notch_approach)."""
+        ctx = self._detect_context() if WIN else modes.Context()
+        if not ctx.exe and self._open_ctx is not None:      # only our own windows to be seen: go by the notch's
+            ctx = self._open_ctx
+        if ctx.kind:
+            self._enter_mode(ctx)
+            return False
         if WIN:
-            ctx = self._detect_context()
-            if ctx.kind:
-                self._enter_mode(ctx)
-                return False
             return True
         token = self._mode_token
         self._mode_exec.submit(lambda: self.mode_data.emit(token, "context", self._detect_context()))
@@ -1554,6 +1576,9 @@ class RotaryApp(QObject):
         fut.add_done_callback(lambda f: self.mode_data.emit(token, "video", f.result()))
 
     def _on_mode_data(self, token: int, what: str, data) -> None:
+        if what == "front":
+            self._front = (time.monotonic(), data) if data.kind else None
+            return
         if token != self._mode_token or self.engine.phase != Phase.OPEN:
             return
         if what == "volume":
