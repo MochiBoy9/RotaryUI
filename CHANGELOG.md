@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **AI agents on the notch** (*AI agents* page). The notch shows what Claude Code, Codex, an MCP agent or a model
+  is doing, live: a turning purple-blue ring while it works, each new step sliding in for a moment ("Claude Code ·
+  Writing the tests"), and every agent with what it's doing right now when you hover. When an agent has a question
+  (a Claude Code permission prompt, a multiple-choice question, or `ask_user` from any MCP agent), an amber **?**
+  pops up on the notch; hover to answer with a click, or **Reply…** to type one. Connect Claude Code and Codex
+  with one click. Ollama, Groq, LM Studio, OpenAI, OpenRouter and other models show through a pass-through
+  address, and anything else can post to a small local API. Everything stays on this computer, behind a secret
+  address.
+
 ## [2.2.3]
 
 ### Changed

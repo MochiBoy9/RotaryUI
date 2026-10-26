@@ -21,8 +21,8 @@ from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QConicalGradie
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from . import (DATA_DIR, LINUX, T0, WIN, __version__, assist, environment, integrations, keys, modes, system,
-               tutorial, update, winapi)
+from . import (DATA_DIR, LINUX, T0, WIN, __version__, agents, assist, environment, integrations, keys, modes,
+               system, tutorial, update, winapi)
 from .actions import (CONFIG_PATH, Item, back_item, build_items, cleanup_scripts, execute, item_from, load_config,
                       save_config)
 from .feedback import Sounds, Speaker
@@ -333,6 +333,7 @@ class RotaryApp(QObject):
     volume_level = Signal(float)           # the volume slider set this level (-1: unknown)
     volume_read = Signal(float)            # the level when the rotary opened from the mouse / keyboard
     resize_window = Signal(object)         # two-hand resize began on this ActiveWindow (None: nothing to resize)
+    agents_changed = Signal()              # an AI agent's status or question changed (agents.py, any thread)
 
     def __init__(self, app: QApplication, show_window: bool | None = None):
         super().__init__()
@@ -370,6 +371,16 @@ class RotaryApp(QObject):
         self.notch.assist.connect(self.start_assist)
         self._assist_busy = False
         self._assist_until = 0.0           # keeps the notch up for a screen-assist message
+        # AI agents: Claude Code, Codex, MCP clients and models report to a local server; the notch shows them
+        self.agent_hub = agents.Hub(self.agents_changed.emit)
+        self.agent_bridge = agents.Bridge(self.agent_hub, lambda: self.cfg)
+        self.agents_changed.connect(self._on_agents_changed)
+        self.notch.agent_answer.connect(self.agent_hub.answer)
+        self._asking = False               # an agent's question is on the notch
+        self._agents_timer = QTimer(self)  # forget agents that went quiet
+        self._agents_timer.setInterval(60_000)
+        self._agents_timer.timeout.connect(self._on_agents_changed)
+        self._agents_timer.start()
         self.live = LiveWatcher(self)
         self.live.state.connect(self.notch.set_live)
         self.live.state.connect(self._on_live_state)
@@ -767,11 +778,41 @@ class RotaryApp(QObject):
         self.notch.set_hotkey(keys.label(gen.get("hotkey", "ctrl+alt+space")))
         self.mouse_trigger.configure(gen.get("mouse_button", "middle"), gen.get("mouse_select", "off"),
                                      gen.get("mouse_close", "off"))
+        self._apply_agents()
         self._register_hotkey()
         self._update_notch()
         self._update_pill()
         if save:
             self._save_timer.start()
+
+    def _apply_agents(self) -> None:
+        """Start (or stop, or move) the local server AI agents talk to."""
+        a = agents.settings(self.cfg)
+        if a["enabled"]:
+            if a["token"] != agents.ensure_token(self.cfg):
+                self._save_timer.start()             # a new token: keep it, the tools are set up with it
+            a = agents.settings(self.cfg)
+            try:
+                port = int(a["port"])
+            except (TypeError, ValueError):
+                port = agents.DEFAULTS["port"]
+            self.agent_bridge.start(port, a["token"])
+        else:
+            self.agent_bridge.stop()
+            for q in self.agent_hub.snapshot()[1]:
+                self.agent_hub.answer(q.id, None)    # nobody's listening any more: the agents ask the usual way
+        self.notch.agent_flash = bool(a.get("flash", True))
+
+    def _on_agents_changed(self) -> None:
+        sessions, questions = self.agent_hub.snapshot()
+        self.notch.set_agents(sessions, questions)
+        asking = bool(questions)
+        if asking != self._asking:
+            self._asking = asking
+            if asking:
+                self.sounds.play("confirm")
+                self._say(f"{questions[0].agent} has a question")
+            self._update_notch()
 
     def reload_config(self) -> None:
         """config.json was edited outside the app."""
@@ -1159,7 +1200,7 @@ class RotaryApp(QObject):
         mode = self.cfg.get("general", {}).get("notch", "auto")
         if mode == "off":
             return False
-        if mode == "on" or self._assist_showing() or self._ringing is not None:
+        if mode == "on" or self._assist_showing() or self._ringing is not None or self._asking:
             return True
         # auto: when there's no camera to use (switched off, or none found for a few seconds)
         return self._no_cam_since is not None and time.monotonic() - self._no_cam_since > 4.0
@@ -1169,8 +1210,8 @@ class RotaryApp(QObject):
         wanted = self._notch_wanted()
         # Alerts and screen-assist answers may show over a borderless full-screen game, never an exclusive one.
         alert = time.monotonic() < self._alert_until or (self._assist_showing() and self._fs_state != 3)
-        if self._ringing is not None and self._fs_state != 3 and self.cfg.get("island", {}).get("alerts_over_games",
-                                                                                                 True):
+        if ((self._ringing is not None or self._asking) and self._fs_state != 3
+                and self.cfg.get("island", {}).get("alerts_over_games", True)):
             alert = True
         show = wanted and (alert or not (self._fullscreen and gen.get("notch_hide_fullscreen", True)))
         # The live activities keep watching while a game hides the notch, so a saved clip can still pop up. With
@@ -2089,6 +2130,7 @@ class RotaryApp(QObject):
             self._save_cfg()
 
     def _shutdown(self) -> None:
+        self.agent_bridge.stop()
         if self.tour is not None:            # quit mid-tour: it picks up again next time (tutorial_done stays false)
             import shiboken6
             self.tour.finished.disconnect()

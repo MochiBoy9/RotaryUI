@@ -18,6 +18,11 @@ call, hover for Mute / Deafen and Leave.
 
 Screen assist's answers stay on it for a while: the option to pick ("B") in a badge and a short answer;
 hover for the longer, detailed answer, Copy (which copies the detailed one) and Dismiss.
+
+AI agents (Claude Code, Codex, a local model… see agents.py) show while they work: a turning purple-blue ring
+and how long it's been at it. Each new step it moves on to slides in for a moment ("Claude Code · Writing the
+tests"); hover for every agent and what it's doing right now. When one has a question, the notch says so with an
+amber "?" — hover it to answer: its options as buttons, or Reply… to type an answer.
 """
 from __future__ import annotations
 
@@ -26,10 +31,10 @@ import sys
 import time
 from dataclasses import replace
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QGuiApplication, QImage, QLinearGradient,
-                           QPainter, QPainterPath, QPen, QPixmap, QTransform)
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import (QColor, QConicalGradient, QCursor, QFont, QFontMetricsF, QGuiApplication, QImage,
+                           QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QTransform)
+from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QMenu, QVBoxLayout, QWidget
 
 from ..live import LiveState, NowPlaying
 from . import liquid
@@ -37,6 +42,7 @@ from .glass import (ICONS, TEXT, Spring, black, exclude_from_capture, font, fram
                     qcolor, refuse_activation, stroke_rim, white)
 
 GREEN, AMBER, RED, BLUE, GRAY, ORANGE = "#30D158", "#FF9F0A", "#FF453A", "#0A84FF", "#8E8E93", "#FF9F0A"
+AI_COLORS = ("#BF5AF2", "#5E5CE6", "#0A84FF", "#64D2FF", "#BF5AF2")     # an agent at work: purple into blue
 G_PREV, G_PLAY, G_PAUSE, G_NEXT, G_TIMER, G_MUSIC = "", "", "", "", "", ""
 G_PHONE, G_MIC, G_DEAFEN = "\uE717", "\uE720", "\uE74F"
 G_CHECK, G_CLOSE = "\uE73E", "\uE711"
@@ -47,6 +53,8 @@ CALL_BUTTONS = {"Discord": [("mute", "Mute"), ("deafen", "Deafen"), ("leave", "L
 PAUSED_SHOW_SECONDS = 120          # a paused song stays on the notch this long
 HOVER_HINT = "Click to open wheel"
 HOVER_HINT_SECONDS = 0.9           # a hover this long, with nothing else on the notch, shows the hint
+AGENT_FLASH_SECONDS = 4.0          # an agent's new step stays on the notch this long
+AGENT_ROWS = 3                     # agents listed on the hover card
 EDGES = ("top", "bottom", "left", "right")
 AWAY = {"top": (0, 1), "bottom": (0, -1), "left": (1, 0), "right": (-1, 0)}   # from each edge into the screen
 
@@ -90,6 +98,7 @@ class NotchWindow(QWidget):
     moved = Signal(object)           # where it was put: {"docked", "edge", "x", "y", "up"} (None = back home)
     customize = Signal()             # "Customise the notch…" from its menu
     assist = Signal()                # "Solve what's on screen" from its menu
+    agent_answer = Signal(str, object, bool)     # (question id, the answer — None: put away, typed)
 
     # Base geometry in logical px at the default text size: (width, height, bottom corner radius).
     COLLAPSED = (188.0, 30.0, 13.0)
@@ -101,6 +110,8 @@ class NotchWindow(QWidget):
     CALL_CARD = (330.0, 64.0, 26.0)
     INCOMING_CARD = (390.0, 74.0, 30.0)
     ANSWER_CARD = (500.0, 300.0, 28.0)   # width, tallest, radius (the height follows the text)
+    QUESTION_CARD = (500.0, 320.0, 28.0)
+    AGENTS_CARD = (440.0, 0.0, 28.0)     # the height follows the number of agents
     MAX_W = 560.0
     MARGIN = 14.0
     SHOULDER = 8.0
@@ -154,6 +165,17 @@ class NotchWindow(QWidget):
         self._answer_timer = QTimer(self)
         self._answer_timer.setSingleShot(True)
         self._answer_timer.timeout.connect(self._answer_expired)
+        # AI agents (agents.py): who's working on what, and the questions they're waiting on
+        self.agents: list = []           # agents.Session, most recent first
+        self.questions: list = []        # agents.Question, oldest first
+        self.agent_flash = True          # show each new step for a moment
+        self._agent_seen: dict[str, tuple] = {}
+        self._flash_text = ""
+        self._flash_until = 0.0
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._flash_over)
+        self.reply_box: ReplyBox | None = None
         self.hint_ready = False          # hovered long enough for "Click to open wheel"
         self._hint_timer = QTimer(self)
         self._hint_timer.setSingleShot(True)
@@ -530,6 +552,109 @@ class NotchWindow(QWidget):
         QTimer.singleShot(1600, self.update)
         self.update()
 
+    # -- AI agents
+    def set_agents(self, sessions: list, questions: list) -> None:
+        """What the agent bridge knows now. A new step, or an agent finishing or waiting, slides in for a moment."""
+        flash = ""
+        now = time.monotonic()
+        seen = {}
+        for s in sessions:
+            mark = (s.state, s.step)
+            seen[s.key] = mark
+            before = self._agent_seen.get(s.key)
+            if not s.busy(now) or before == mark or s.state == "idle":
+                continue
+            if s.state == "working" and (s.step or before is None):
+                text = s.step or "Working"
+            elif s.state == "done" and (before is None or before[0] != "done"):
+                text = s.text if s.text and s.text != "Finished" else "Finished"
+            elif s.state in ("waiting", "error") and (before is None or before[0] != s.state):
+                text = s.now()
+            else:
+                continue
+            flash = flash or f"{s.agent} · {text}"
+        self._agent_seen = seen
+        had = self.question()
+        self.agents, self.questions = list(sessions), list(questions)
+        if self.reply_box is not None and self.reply_box.isVisible() and not any(
+                q.id == self.reply_box.qid for q in self.questions):
+            self.reply_box.hide()                    # answered somewhere else
+        if flash and self.agent_flash and self.question() is None:
+            self._flash(flash)
+        elif (had is None) != (self.question() is None):
+            self._prev_text = ""
+            self.fade.snap(0.0)
+            self.fade.target = 1.0
+        self._retarget()
+
+    def _flash(self, text: str) -> None:
+        self._prev_text = self._shown_text()
+        self._flash_text = text
+        self._flash_until = time.monotonic() + AGENT_FLASH_SECONDS
+        self._flash_timer.start(int(AGENT_FLASH_SECONDS * 1000) + 30)
+        self.fade.snap(0.0)
+        self.fade.target = 1.0
+
+    def _flash_over(self) -> None:
+        if self._flash_text and not self.status_text:
+            self._prev_text = self._flash_text
+            self.fade.snap(0.0)
+            self.fade.target = 1.0
+        self._flash_text = ""
+        self._retarget()
+
+    def flash_text(self) -> str:
+        """An agent's new step, while it's on the notch (a hover shows the card instead)."""
+        if not self._flash_text or time.monotonic() >= self._flash_until or self.hovered:
+            return ""
+        return self._flash_text
+
+    def question(self):
+        """The question to answer first (the oldest), or None."""
+        return self.questions[0] if self.questions else None
+
+    def question_headline(self) -> str:
+        q = self.question()
+        return f"{q.agent} · {q.text}" if q is not None else ""
+
+    def answer_question(self, answer: str | None, typed: bool = False) -> None:
+        q = self.question()
+        if q is None:
+            return
+        self.questions = [x for x in self.questions if x.id != q.id]     # gone at once; the bridge confirms
+        self._hover_button = ""
+        self.agent_answer.emit(q.id, answer, typed)
+        self._retarget()
+
+    def open_reply(self) -> None:
+        """Reply…: a small box under the notch to type an answer in."""
+        q = self.question()
+        if q is None:
+            return
+        if self.reply_box is None:
+            self.reply_box = ReplyBox()
+            self.reply_box.sent.connect(self._reply_sent)
+        body = self.body_rect()
+        g = QRectF(self.mapToGlobal(body.topLeft().toPoint()), body.size())
+        self.reply_box.open_for(q, g, self.edge == "bottom" or (self.edge is None and self._up), self.s)
+
+    def _reply_sent(self, qid: str, text: str) -> None:
+        q = self.question()
+        if q is not None and q.id == qid:
+            self.answer_question(text, typed=True)
+        elif any(x.id == qid for x in self.questions):
+            self.questions = [x for x in self.questions if x.id != qid]
+            self.agent_answer.emit(qid, text, True)
+            self._retarget()
+
+    def lead_agent(self):
+        """The agent the resting notch shows: one waiting on you, else one at work, else one that just finished
+        (the most recent of those)."""
+        now = time.monotonic()
+        busy = [s for s in self.agents if s.busy(now)]
+        rank = {"waiting": 0, "working": 1}
+        return min(busy, key=lambda s: rank.get(s.state, 2), default=None)
+
     # ------------------------------------------------------------------ what to show
     def incoming(self) -> tuple[str, str] | None:
         """A call ringing in that hasn't been put away: (app, who — "" if unknown)."""
@@ -561,13 +686,16 @@ class NotchWindow(QWidget):
         return m
 
     def activity(self) -> str:
-        """The one live activity the resting notch shows: ringing > call > timer > clip recording > now playing."""
+        """The one live activity the resting notch shows: ringing > call > timer > an AI agent > clip recording >
+        now playing."""
         if self.incoming() is not None:
             return "ringing"
         if self.opts["calls"] and self.live.call:
             return "call"
         if self.timer_end is not None:
             return "timer"
+        if self.lead_agent() is not None:
+            return "agent"
         if self.opts["clips"] and self.live.clipping:
             return "clip"
         if self.media() is not None:
@@ -596,17 +724,22 @@ class NotchWindow(QWidget):
             return ""
         if self.incoming() is not None:
             return "incoming"
+        if self.hovered and self.question() is not None:
+            return "question"
         if self.hovered and self.answer is not None:
             return "answer"
         if not self.hovered or self.status_text or self.status_progress is not None:
             return ""
         act = self.activity()
+        if act == "agent":
+            return "agents"
         return act if act in ("media", "timer", "call") else ""
 
     # ------------------------------------------------------------------ geometry
     def _resize_window(self) -> None:
         w = int(math.ceil((self.MAX_W + 2 * self.MARGIN) * self.s))
-        h = int(math.ceil((max(self.MEDIA_CARD[1], self.ANSWER_CARD[1]) + self.MARGIN + self.FLOAT_PAD) * self.s))
+        tallest = max(self.MEDIA_CARD[1], self.ANSWER_CARD[1], self.QUESTION_CARD[1], self._agents_card_h(AGENT_ROWS))
+        h = int(math.ceil((tallest + self.MARGIN + self.FLOAT_PAD) * self.s))
         if (w, h) != (self.width(), self.height()):
             self.resize(w, h)
             self._glass_key = None
@@ -616,6 +749,8 @@ class NotchWindow(QWidget):
     def _shown_text(self) -> str:
         if self.status_text:
             return self.status_text
+        if self.flash_text():
+            return self.flash_text()
         if self.hovered and not self._card_kind():
             return self._hover_label()
         return ""
@@ -634,7 +769,8 @@ class NotchWindow(QWidget):
         if not self.hovered or self.hint_ready:
             return
         self.hint_ready = True
-        if not self.status_text and not self._card_kind() and self.answer is None and self._hover_label():
+        if (not self.status_text and not self._card_kind() and self.answer is None and self.question() is None
+                and self._hover_label()):
             self._prev_text = ""
             self.fade.snap(0.0)
             self.fade.target = 1.0
@@ -653,6 +789,8 @@ class NotchWindow(QWidget):
             side = max(46 * s, self._text_width(mmss(self.timer_left()), 12.5) + 14 * s)
         elif act == "ringing":
             side = max(46 * s, self._text_width("Ringing", 12.5) + 14 * s)
+        elif act == "agent":
+            side = max(46 * s, self._text_width(self._agent_side(), 12.5) + 14 * s)
         elif act == "call":
             side = max(46 * s, self._text_width(mmss(self.call_seconds()), 12.5) + 14 * s)
         elif act in ("media", "clip"):
@@ -687,16 +825,27 @@ class NotchWindow(QWidget):
     def _target(self) -> tuple[float, float, float, float]:
         s = self.s
         card = self._card_kind()
+        if card == "question":
+            w, _h, r = self.QUESTION_CARD
+            return w * s, self._question_layout(w * s)["h"], r * s, 1.0
         if card == "answer":
             w, _h, r = self.ANSWER_CARD
             return w * s, self._answer_layout(w * s)[2], r * s, 1.0
+        if card == "agents":
+            w, _h, r = self.AGENTS_CARD
+            return w * s, self._agents_card_h(len(self._listed_agents())) * s, r * s, 1.0
+        if self.question() is not None and card != "incoming":
+            h = self.STATUS_H * s
+            w = 44 * s + self._text_width(self.question_headline()) + 22
+            return min(self.MAX_W * s, max(self.COLLAPSED[0] * s, w)), h, h / 2 - 2, 0.0
         if self.answer is not None:
             h = self.STATUS_H * s
             w = 44 * s + self._badge_extra() + self._text_width(self.answer_headline()) + 22
             return min(self.MAX_W * s, max(self.COLLAPSED[0] * s, w)), h, h / 2 - 2, 0.0
-        if self.status_text or self.status_progress is not None:
+        if self.status_text or self.status_progress is not None or self.flash_text():
             h = self.STATUS_H * s
-            w = (40 * s + self._text_width(self.status_text) + 22) if self.status_text else 120 * s
+            text = self._shown_text()
+            w = (40 * s + self._text_width(text) + 22) if text else 120 * s
             return min(self.MAX_W * s, max(self.COLLAPSED[0] * s, w)), h, h / 2 - 2, 0.0
         if card == "media":
             w, h, r = self.MEDIA_CARD
@@ -907,6 +1056,8 @@ class NotchWindow(QWidget):
         m = self.media()
         if act == "media" and m is not None and m.playing and not self.reduce_motion and not self._card_kind():
             interval = 80
+        elif (act == "agent" or self.flash_text() or self.question() is not None) and not self.reduce_motion:
+            interval = 40                    # the agent's turning ring
         elif self._clock() or act or self._card_kind():
             interval = 1000 if not act == "clip" else 120
         else:
@@ -925,7 +1076,7 @@ class NotchWindow(QWidget):
         if self._declined is not None and self.live.incoming != self._declined:
             self._declined = None            # that call stopped ringing: the next one shows again
         key = (f"{self._clock()}|{mmss(self.timer_left()) if self.timer_end else ''}|"
-               f"{mmss(self.call_seconds()) if self.live.call else ''}")
+               f"{mmss(self.call_seconds()) if self.live.call else ''}|{self._agent_side()}|{self.activity()}")
         if key != self._clock_key:
             self._clock_key = key
             self._retarget()
@@ -1114,6 +1265,10 @@ class NotchWindow(QWidget):
                 self._paint_incoming_card(p, rect)
             elif kind == "answer":
                 self._paint_answer_card(p, rect)
+            elif kind == "question":
+                self._paint_question_card(p, rect)
+            elif kind == "agents":
+                self._paint_agents_card(p, rect)
         p.restore()
 
     _last_card = ""
@@ -1127,6 +1282,16 @@ class NotchWindow(QWidget):
         text = self._shown_text()
         tf, fm = self._font("text", 13.5 * self.k, QFont.Weight.DemiBold)
         f = max(0.0, min(1.0, self.fade.value))
+        q = self.question()
+        if q is not None:
+            self._ask_badge(p, QPointF(rect.left() + 20 * s, cy), 10 * s)
+            tx = rect.left() + 38 * s
+            area = QRectF(tx, rect.top(), rect.right() - tx - 12, h)
+            p.setFont(tf)
+            p.setPen(white(0.97))
+            p.drawText(area, Qt.AlignmentFlag.AlignVCenter,
+                       fm.elidedText(self.question_headline(), Qt.TextElideMode.ElideRight, area.width()))
+            return
         if self.answer is not None:
             self._badge(p, QPointF(rect.left() + 20 * s + self._badge_extra() / 2, cy), 10 * s)
             tx = rect.left() + 38 * s + self._badge_extra()
@@ -1140,6 +1305,8 @@ class NotchWindow(QWidget):
             ic = QPointF(rect.left() + 20 * s, cy)
             if self.status_text or self.status_progress is not None:
                 self._indicator(p, ic)
+            elif self.flash_text() or (self._prev_text and not text and self.lead_agent() is not None):
+                self._agent_icon(p, ic, self.lead_agent(), 9 * s)
             elif self.activity() == "clip":
                 self._rec_dot(p, ic)
             else:
@@ -1225,6 +1392,15 @@ class NotchWindow(QWidget):
             p.setFont(tf)
             p.setPen(QColor(GREEN))
             t = mmss(self.call_seconds())
+            p.drawText(QRectF(right - tfm.horizontalAdvance(t) - 2, rect.top(), tfm.horizontalAdvance(t) + 4,
+                              rect.height()), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, t)
+        elif act == "agent":
+            ag = self.lead_agent()
+            self._agent_icon(p, lead, ag, 9 * s)
+            tf, tfm = self._font("text", 12.5 * self.k, QFont.Weight.DemiBold)
+            p.setFont(tf)
+            p.setPen(qcolor(self._agent_color(ag), 1.0))
+            t = self._agent_side()
             p.drawText(QRectF(right - tfm.horizontalAdvance(t) - 2, rect.top(), tfm.horizontalAdvance(t) + 4,
                               rect.height()), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, t)
         elif act == "clip":
@@ -1435,6 +1611,181 @@ class NotchWindow(QWidget):
         bw = self._text_width("Copied", 12) + 24 * s
         self._button(p, "answer_copy", QRectF(right - bh - 8 * s - bw, top + rr - bh / 2, bw, bh), "",
                      text="Copied" if copied else "Copy")
+
+    # -- AI agents
+    @staticmethod
+    def _agent_color(ag) -> str:
+        if ag is None or ag.state == "working":
+            return "#A9A2FF"
+        return {"waiting": AMBER, "done": GREEN, "error": RED}.get(ag.state, GRAY)
+
+    def _agent_side(self) -> str:
+        """The resting notch's right-hand side for the agent at work: how long it's been at it, or how it stands."""
+        ag = self.lead_agent()
+        if ag is None:
+            return ""
+        if ag.state == "working":
+            return mmss(time.time() - ag.started)
+        return {"waiting": "Waiting", "done": "Done", "error": "Error"}.get(ag.state, "")
+
+    def _agent_icon(self, p: QPainter, c: QPointF, ag, rr: float) -> None:
+        """At work: a ring turning through purple and blue. Waiting: an amber dot; finished: a green tick."""
+        s = self.s
+        state = ag.state if ag is not None else "working"
+        if state == "working":
+            t = 0.0 if self.reduce_motion else (time.perf_counter() - self._t0)
+            g = QConicalGradient(c, -t * 240.0)
+            for i, col in enumerate(AI_COLORS):
+                g.setColorAt(i / (len(AI_COLORS) - 1), QColor(col))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(g, 2.6 * s))
+            p.drawEllipse(c, rr - 1.5 * s, rr - 1.5 * s)
+            p.setPen(Qt.PenStyle.NoPen)
+            pulse = 0.5 if self.reduce_motion else 0.5 + 0.5 * math.sin(t * 4)
+            p.setBrush(qcolor("#BF5AF2", 0.55 + 0.4 * pulse))
+            p.drawEllipse(c, rr * 0.32, rr * 0.32)
+            return
+        col = self._agent_color(ag)
+        if state == "waiting":
+            a = 1.0 if self.reduce_motion else 0.55 + 0.45 * (0.5 + 0.5 * math.sin((time.perf_counter() - self._t0) * 4))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(qcolor(col, 0.3 * a))
+            p.drawEllipse(c, rr * 0.8, rr * 0.8)
+            p.setBrush(qcolor(col, a))
+            p.drawEllipse(c, rr * 0.45, rr * 0.45)
+            return
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(col))
+        p.drawEllipse(c, rr, rr)
+        p.setFont(self._font("icons", rr * 1.05, QFont.Weight.Bold)[0])
+        p.setPen(white(1.0))
+        p.drawText(QRectF(c.x() - rr, c.y() - rr, 2 * rr, 2 * rr), Qt.AlignmentFlag.AlignCenter,
+                   G_CHECK if state == "done" else (G_CLOSE if state == "error" else ""))
+
+    def _ask_badge(self, p: QPainter, c: QPointF, rr: float) -> None:
+        """A question waiting: "?" on amber."""
+        path = QPainterPath()
+        path.addEllipse(c, rr, rr)
+        p.fillPath(path, QColor(AMBER))
+        p.setPen(white(1.0))
+        p.setFont(self._font("text", rr * 1.3, QFont.Weight.Bold)[0])
+        p.drawText(QRectF(c.x() - rr, c.y() - rr, 2 * rr, 2 * rr), Qt.AlignmentFlag.AlignCenter, "?")
+
+    def _listed_agents(self) -> list:
+        return self.agents[:AGENT_ROWS]
+
+    @staticmethod
+    def _agents_card_h(rows: int) -> float:
+        return 14.0 + 48.0 * max(1, rows) + 10.0
+
+    def _paint_agents_card(self, p: QPainter, rect: QRectF) -> None:
+        listed = self._listed_agents()
+        if not listed:
+            return
+        self._last_card = "agents"
+        s = self.s
+        tf, tfm = self._font("text", 13.5 * self.k, QFont.Weight.DemiBold)
+        sf, sfm = self._font("text", 12 * self.k, QFont.Weight.Normal)
+        rf, rfm = self._font("text", 12 * self.k, QFont.Weight.DemiBold)
+        y = rect.top() + 14 * s
+        for ag in listed:
+            cy = y + 24 * s
+            self._agent_icon(p, QPointF(rect.left() + 32 * s, cy), ag, 13 * s)
+            x = rect.left() + 58 * s
+            side = mmss(time.time() - ag.started) if ag.state == "working" else {
+                "waiting": "Waiting", "done": "Done", "error": "Error", "idle": "Ready"}.get(ag.state, "")
+            sw = rfm.horizontalAdvance(side) + 4
+            right = rect.right() - 18 * s
+            tw = right - sw - 10 * s - x
+            p.setFont(tf)
+            p.setPen(white(0.97))
+            p.drawText(QRectF(x, cy - tfm.height() + 1 * s, tw, tfm.height()), Qt.AlignmentFlag.AlignLeft,
+                       tfm.elidedText(ag.label(), Qt.TextElideMode.ElideRight, tw))
+            p.setFont(sf)
+            p.setPen(white(0.62))
+            line = ag.now()
+            if ag.state == "working" and ag.step and ag.text and ag.step != ag.text:
+                line = f"{ag.step} · {ag.text}"
+            p.drawText(QRectF(x, cy + 2 * s, right - x, sfm.height()), Qt.AlignmentFlag.AlignLeft,
+                       sfm.elidedText(line, Qt.TextElideMode.ElideRight, right - x))
+            p.setFont(rf)
+            p.setPen(qcolor(self._agent_color(ag), 0.95))
+            p.drawText(QRectF(right - sw, cy - tfm.height() + 1 * s, sw, tfm.height()),
+                       Qt.AlignmentFlag.AlignRight, side)
+            y += 48 * s
+
+    def _question_layout(self, w: float) -> dict:
+        """The question card for a body `w` wide: where everything goes (offsets from its top-left) and its height."""
+        s = self.s
+        q = self.question()
+        flags = int(Qt.TextFlag.TextWordWrap)
+        x0, right = 58 * s, w - 16 * s
+        tfm = self._font("text", 14 * self.k, QFont.Weight.DemiBold)[1]
+        dfm = self._font("text", 12 * self.k, QFont.Weight.Normal)[1]
+        text = q.text if q is not None else ""
+        detail = q.detail if q is not None else ""
+        top = 14 * s + 18 * s                        # under the "Claude Code · project" line
+        th = tfm.boundingRect(QRectF(0, 0, right - x0, 1000), flags, text).height() if text else 0.0
+        th = min(th, 3 * tfm.lineSpacing())
+        dh = dfm.boundingRect(QRectF(0, 0, right - x0, 1000), flags, detail).height() if detail else 0.0
+        dh = min(dh, 4 * dfm.lineSpacing())
+        y = top + th + (6 * s + dh if detail else 0.0) + 12 * s
+        labels = list(q.options) if q is not None else []
+        keys = [f"q_opt_{i}" for i in range(len(labels))]
+        if q is not None and q.allow_text:
+            labels.append("Reply…")
+            keys.append("q_reply")
+        bh, gap = 30 * s, 8 * s
+        buttons, bx = [], x0
+        for key, label in zip(keys, labels):
+            bw = min(right - x0, self._text_width(label, 12) + 28 * s)
+            if bx > x0 and bx + bw > right:
+                bx, y = x0, y + bh + gap
+            buttons.append((key, label, QRectF(bx, y, bw, bh)))
+            bx += bw + gap
+        h = (y + bh if buttons else y) + 16 * s
+        return {"th": th, "dh": dh, "top": top, "buttons": buttons,
+                "h": max(96 * s, min(self.QUESTION_CARD[1] * s, h))}
+
+    def _paint_question_card(self, p: QPainter, rect: QRectF) -> None:
+        q = self.question()
+        if q is None:
+            return
+        self._last_card = "question"
+        s = self.s
+        lay = self._question_layout(rect.width())
+        x, right = rect.left() + 58 * s, rect.right() - 16 * s
+        self._ask_badge(p, QPointF(rect.left() + 16 * s + 15 * s, rect.top() + 14 * s + 15 * s), 15 * s)
+        bh = 26 * s
+        self._button(p, "q_close", QRectF(right - bh, rect.top() + 10 * s, bh, bh), G_CLOSE)
+        hf, hfm = self._font("text", 12 * self.k, QFont.Weight.Normal)
+        p.setFont(hf)
+        p.setPen(white(0.6))
+        more = f"  ·  {len(self.questions) - 1} more" if len(self.questions) > 1 else ""
+        head = (f"{q.agent} · {q.where}" if q.where else q.agent) + " asks"
+        hw = right - bh - 8 * s - x
+        p.drawText(QRectF(x, rect.top() + 14 * s, hw, hfm.height()), Qt.AlignmentFlag.AlignLeft,
+                   hfm.elidedText(head + more, Qt.TextElideMode.ElideRight, hw))
+        flags = int(Qt.TextFlag.TextWordWrap)
+        top = rect.top() + lay["top"]
+        p.setFont(self._font("text", 14 * self.k, QFont.Weight.DemiBold)[0])
+        p.setPen(white(0.97))
+        p.drawText(QRectF(x, top, right - x, lay["th"] + 1), flags | int(Qt.AlignmentFlag.AlignLeft), q.text)
+        if q.detail:
+            p.setFont(self._font("text", 12 * self.k, QFont.Weight.Normal)[0])
+            p.setPen(white(0.62))
+            p.drawText(QRectF(x, top + lay["th"] + 6 * s, right - x, lay["dh"] + 1),
+                       flags | int(Qt.AlignmentFlag.AlignLeft), q.detail)
+        for i, (key, label, r) in enumerate(lay["buttons"]):
+            tint = BLUE if i == 0 and key.startswith("q_opt") else ""
+            if label == "Deny":
+                tint = ""
+            br = r.translated(rect.left(), rect.top())
+            if br.bottom() > rect.bottom() - 4 * s:
+                break                                # the card is still growing
+            p.setFont(self._font("text", 12 * self.k, QFont.Weight.DemiBold)[0])
+            self._button(p, key, br, "", text=self._font("text", 12 * self.k, QFont.Weight.DemiBold)[1].elidedText(
+                label, Qt.TextElideMode.ElideRight, br.width() - 16 * s), tint=tint)
 
     def call_seconds(self) -> float:
         return max(0.0, time.time() - self.live.call[1]) if self.live.call else 0.0
@@ -1687,6 +2038,18 @@ class NotchWindow(QWidget):
         if b == "answer_close":
             self.clear_answer()
             return
+        if b.startswith("q_opt_"):
+            q = self.question()
+            i = int(b[6:])
+            if q is not None and i < len(q.options):
+                self.answer_question(q.options[i])
+            return
+        if b == "q_reply":
+            self.open_reply()
+            return
+        if b == "q_close":
+            self.answer_question(None)               # the agent asks the usual way instead
+            return
         # a click or the start of a drag: which one is decided when it moves or lets go
         g = ev.globalPosition()
         self._vel = self._glide = None
@@ -1701,6 +2064,8 @@ class NotchWindow(QWidget):
             return
         drag, self._drag = self._drag, None
         if not drag["moved"]:
+            if self._card_kind() == "question":
+                return                               # answered with its buttons, not a click anywhere on it
             if self.answer is not None:
                 self.clear_answer()                  # a click puts the answer away
             else:
@@ -1740,6 +2105,14 @@ class NotchWindow(QWidget):
         m = QMenu()
         m.addAction("Open the rotary", self.clicked.emit)
         m.addAction("Solve what's on screen", self.assist.emit)
+        q = self.question()
+        if q is not None:
+            m.addSeparator()
+            for opt in q.options:
+                m.addAction(f"Answer {q.agent}: {opt}", lambda o=opt: self.answer_question(o))
+            if q.allow_text:
+                m.addAction(f"Reply to {q.agent}…", self.open_reply)
+            m.addAction("Answer it in the app instead", lambda: self.answer_question(None))
         if self.answer is not None:
             m.addAction("Copy the answer", self.copy_answer)
             m.addAction("Dismiss the answer", self.clear_answer)
@@ -1771,3 +2144,82 @@ class NotchWindow(QWidget):
             m.addAction("Put the notch back in the middle", self.go_home)
         m.addAction("Customize the notch…", self.customize.emit)
         m.exec(QCursor.pos())
+
+
+class ReplyBox(QWidget):
+    """Reply…: a small dark box beside the notch to type an answer to an agent's question. Enter sends it, Esc or
+    clicking elsewhere puts it away. Unlike the notch it takes the keyboard, so it can be typed in."""
+    sent = Signal(str, str)          # (question id, the reply)
+
+    def __init__(self):
+        super().__init__(None)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                            | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowTitle("Reply from the notch")
+        self.qid = ""
+        frame = QFrame(self)
+        frame.setObjectName("reply")
+        frame.setStyleSheet(
+            "#reply { background: rgba(14, 14, 18, 240); border: 1px solid rgba(255, 255, 255, 40);"
+            " border-radius: 16px; }"
+            "QLabel { color: rgba(255, 255, 255, 160); background: transparent; }"
+            "QLineEdit { color: white; background: rgba(255, 255, 255, 18); border: 1px solid rgba(255, 255, 255, 50);"
+            " border-radius: 10px; padding: 7px 10px; selection-background-color: #0A84FF; }")
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(14, 10, 14, 12)
+        lay.setSpacing(6)
+        self.title = QLabel()
+        self.title.setWordWrap(True)
+        self.edit = QLineEdit()
+        self.edit.setPlaceholderText("Type your answer, then press Enter")
+        self.edit.setAccessibleName("Your answer")
+        self.edit.returnPressed.connect(self._send)
+        lay.addWidget(self.title)
+        lay.addWidget(self.edit)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(frame)
+
+    def open_for(self, q, notch: QRectF, above: bool, s: float = 1.0) -> None:
+        """Show it for question `q` just past the notch's body (`notch`, in screen coordinates)."""
+        self.qid = q.id
+        self.title.setText(f"Reply to {q.agent}: {q.text}")
+        self.title.setFont(font(TEXT, 12 * s, QFont.Weight.Normal))
+        self.edit.setFont(font(TEXT, 13.5 * s, QFont.Weight.Normal))
+        self.edit.clear()
+        w = int(max(320 * s, notch.width()))
+        self.setFixedWidth(w)
+        self.adjustSize()
+        x = int(notch.center().x() - w / 2)
+        y = int(notch.top() - self.height() - 8 * s) if above else int(notch.bottom() + 8 * s)
+        scr = QGuiApplication.screenAt(notch.center().toPoint()) or QGuiApplication.primaryScreen()
+        if scr is not None:
+            g = scr.availableGeometry()
+            x = max(g.left() + 8, min(x, g.right() - w - 8))
+            y = max(g.top() + 8, min(y, g.bottom() - self.height() - 8))
+        self.move(x, y)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if sys.platform == "win32":
+            from .. import winapi
+            winapi.focus_window(int(self.winId()))     # the notch never takes the focus, so this box has to
+        self.edit.setFocus()
+
+    def _send(self) -> None:
+        text = self.edit.text().strip()
+        if text:
+            self.hide()
+            self.sent.emit(self.qid, text)
+
+    def keyPressEvent(self, ev) -> None:
+        if ev.key() == Qt.Key.Key_Escape:
+            self.hide()
+            return
+        super().keyPressEvent(ev)
+
+    def changeEvent(self, ev) -> None:
+        super().changeEvent(ev)
+        if ev.type() == QEvent.Type.ActivationChange and not self.isActiveWindow() and self.isVisible():
+            QTimer.singleShot(150, lambda: self.isActiveWindow() or self.hide())   # clicked somewhere else
