@@ -150,15 +150,12 @@ game = {"state": "playing", "game": "THE FINALS", "mode": "Quick Cash", "seconds
 n, bg = notch(False)
 n.set_game(game, True)
 frames.append(shot(n, bg))                                                     # a match on
-n.game_flash("Elimination · Dexter")
-frames.append(shot(n, bg))                                                     # an elimination slides in
-n._flash_until = 0
 n.hovered = True
 n._retarget()
-frames.append(shot(n, bg))                                                     # hover: every stat
+frames.append(shot(n, bg))                                                     # hover: still just the stats
 n.hovered = False
-n.set_game({**game, "dead": True}, True)
-frames.append(shot(n, bg))                                                     # down
+n.set_game({**game, "dead": True, "killer": "SweetSpicySalty"}, True)
+frames.append(shot(n, bg))                                                     # eliminated: it opens
 n.set_game({"state": "ended", "game": "THE FINALS", "mode": "Cashout", "seconds": 1310.0, "result": "lost",
             "headline": "Out · 3rd–4th", "estimated": True, "line": "Out · 3rd–4th · 7/4/2",
             "tiles": [("Eliminations", "7"), ("Deaths", "4"), ("Assists", "2"), ("Revives", "1"),

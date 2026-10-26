@@ -9,7 +9,8 @@ OCR on a moving game is noisy, so nothing counts the moment it's read:
     on the death screen. Sightings of the same thing a few seconds apart (and with the same name, when both
     have one) are merged into one.
   * Death is a state. Once the death screen is up you're dead until it has been gone a while (or a teammate
-    revives you), so the countdown ticking away doesn't add deaths.
+    revives you), so the countdown ticking away doesn't add deaths. While you're dead the middle of the screen
+    may be showing whoever you're watching, so only the killfeed can add an elimination or an assist then.
   * Matches start when the in-match HUD has been up for a few seconds (or the first fight), and end on the
     end-of-round banners, or when the game is back in its menus.
 
@@ -21,9 +22,9 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
-from .profile import (DEAD, FEED_ASSIST, FEED_DEATH, FEED_KILL, FEED_LINE, FEED_REVIVE, IN_MATCH, MENU, MODE,
-                      RESULT, REVIVED_BY, ROUND, SCORES, TALLY_ASSIST, TALLY_KILL, TALLY_REVIVE, TALLY_WIPE,
-                      Observation, Profile)
+from .profile import (DEAD, FEED_ASSIST, FEED_DEATH, FEED_KILL, FEED_LINE, FEED_REVIVE, HEAD_ASSIST, HEAD_KILL,
+                      IN_MATCH, MENU, MODE, RESULT, REVIVED_BY, ROUND, SCORES, SELF_NAME, TALLY_ASSIST, TALLY_KILL,
+                      TALLY_REVIVE, TALLY_WIPE, Observation, Profile)
 from .text import best_name, fold, name_key, same_player, similar
 
 STATS = ("kills", "deaths", "assists", "revives", "revived", "wipes")
@@ -37,6 +38,8 @@ MENU_END = 6.0       # s in the menus and the match is over
 COOLDOWN = 20.0      # s after a match ends before the next can start by itself (end screens linger)
 IDLE_END = 300.0     # s with no sign of a match and it's over
 NAME_PAIR = 4.0      # s: a tally elimination and a feed line about the same player
+SCORE_KEEP = 6.0     # s a team's cash stays known when its row wasn't read
+SELF_READS = 6       # frames your name has to be read the same under your health before it's taken
 RESULTS = ("won", "lost", "draw", "place", "left", "ended")
 
 
@@ -69,6 +72,7 @@ class Match:
     final: bool = False
     stats: dict = field(default_factory=lambda: dict.fromkeys(STATS, 0))
     scores: list = field(default_factory=list)       # [(team, amount)] as last read
+    cutoff: int = 0                                  # teams going through, as the board shows it (0: not shown)
     team: str = ""                                   # which of those is yours
     team_sure: bool = False
     votes: Counter = field(default_factory=Counter)
@@ -102,8 +106,8 @@ class Match:
         out = {"ours": ours, "best": others[0], "lead": ours - others[0], "to_lead": max(0, others[0] - ours + 1),
                "rank": 1 + sum(1 for v in others if v > ours), "teams": len(others) + 1, "sure": self.team_sure}
         mode = profile.modes.get(self.mode)
-        if mode is not None and mode.knockout and mode.qualify and not self.final:
-            q = mode.qualify
+        q = self.cutoff or (mode.qualify if mode is not None and mode.knockout else 0)
+        if q and not self.final:
             out["to_qualify"] = max(0, others[q - 1] - ours + 1) if len(others) >= q else 0
         if mode is not None and mode.target:
             out["to_win"] = max(0, mode.target - ours)
@@ -133,6 +137,7 @@ class Tracker:
         self.match: Match | None = None
         self.last: Match | None = None           # the match that just ended (the summary)
         self.dead = False
+        self.killer = ""                         # who eliminated you, while you're out
         self._dead_since = 0.0
         self._dead_seen = 0.0
         self._seen: dict[tuple, _Seen] = {}
@@ -147,7 +152,11 @@ class Tracker:
         self._feed_lines: list = []              # (t, killer, victim)
         self._death_killers: list = []           # (t, killer)
         self.name_votes: Counter = Counter()
+        self.self_reads: Counter = Counter()     # your name as read under your health, frame by frame
+        self._spellings: Counter = Counter()     # (its key, as written)
         self.learned_name = ""
+        self._team_read = ("", 0)                # (your team's key on the board, frames in a row)
+        self._score_seen: dict[str, float] = {}
 
     # ------------------------------------------------------------------ manual control
     def start_match(self, now: float, mode: str = "", manual: bool = True) -> list[Event]:
@@ -159,6 +168,8 @@ class Tracker:
         self.dead = False
         self._recent.clear()
         self._pending_scores.clear()
+        self._score_seen.clear()
+        self._team_read = ("", 0)
         self._last_sign = now
         out.append(Event("match_start", text=self.mode_name(self.match.mode)))
         return out
@@ -211,7 +222,14 @@ class Tracker:
             frame.setdefault(o.key, o)               # once per frame
         for key, o in frame.items():
             if o.kind == DEAD:
+                if "weak" in o.values:
+                    if self.dead:
+                        self._dead_seen = now                # FREE CAMERA…: still out, not newly out
+                    continue
                 self._dead_seen = now
+            if o.kind == SELF_NAME:
+                out += self._self_name(o)
+                continue
             if o.kind == SCORES:
                 out += self._scores(now, o)
                 continue
@@ -254,15 +272,14 @@ class Tracker:
     def _confirmed(self, now: float, o: Observation, s: _Seen) -> list[Event]:
         k = o.kind
         out: list[Event] = []
-        if k in (IN_MATCH, MODE, ROUND, RESULT) or k.startswith(("feed_", "tally_")) or k == DEAD:
+        if k in (IN_MATCH, MODE, ROUND, RESULT) or k.startswith(("feed_", "tally_", "head_")) or k == DEAD:
             self._last_sign = now if k != RESULT else self._last_sign
         if k == MENU:
             m = self.match
             if m is not None and not m.manual and now - s.first >= MENU_END and not s.fired:
                 s.fired = True
-                # Back in the menus straight after a QUALIFIED sequence: it was the other teams going through.
-                out += self.end_match(now, "lost", estimated=True) if m.pending == "qualified" else \
-                    self.end_match(now, "left")
+                # Back in the menus with no win or placement seen: lost (a guess, to check on the summary).
+                out += self.end_match(now, "lost", estimated=True)
             return out
         if k == MODE:
             if not s.fired:
@@ -305,9 +322,11 @@ class Tracker:
                     self._death_killers.append((now, o.other))
                     out += self._learn(now)
                 if not self.dead:
-                    self.dead, self._dead_since = True, now
+                    self.dead, self._dead_since, self.killer = True, now, o.other
                     out += self._count("deaths", now, o.other, "screen", DEATH_MERGE)
                     out.append(Event("dead", text=o.other))
+                elif o.other and not self.killer:
+                    self.killer = o.other
             return out
         if k == FEED_DEATH:
             if not s.fired:
@@ -319,6 +338,7 @@ class Tracker:
                     if not self.dead:
                         self.dead, self._dead_since, self._dead_seen = True, now, now
                         out.append(Event("dead", text=o.other))
+                self.killer = self.killer or o.other
             return out
         if k == REVIVED_BY:
             if not s.fired:
@@ -329,11 +349,16 @@ class Tracker:
                     self.dead = False
                 out.append(Event("stat", "revived", o.other, 1))
             return out
-        stat = {FEED_KILL: "kills", TALLY_KILL: "kills", FEED_ASSIST: "assists", TALLY_ASSIST: "assists",
-                FEED_REVIVE: "revives", TALLY_REVIVE: "revives", TALLY_WIPE: "wipes"}.get(k)
+        stat = {FEED_KILL: "kills", TALLY_KILL: "kills", HEAD_KILL: "kills", FEED_ASSIST: "assists",
+                TALLY_ASSIST: "assists", HEAD_ASSIST: "assists", FEED_REVIVE: "revives", TALLY_REVIVE: "revives",
+                TALLY_WIPE: "wipes"}.get(k)
         if stat is None:
             return out
-        source = "feed" if k.startswith("feed_") else "tally"
+        source = k.split("_")[0]                             # feed | tally | head
+        if self.dead and source != "feed":
+            # Out: the middle of the screen may be a teammate's you're watching. Not counted, now or later.
+            s.fired, s.counted = True, max(s.counted, o.count)
+            return out
         self.match.pending = ""                              # playing on: a new round started
         new = max(1, o.count) - s.counted if source == "tally" else (0 if s.fired else 1)
         s.fired = True
@@ -426,8 +451,23 @@ class Tracker:
             self._pending_scores[key] = (v, n)
             old = dict(m.scores).get(key)
             fresh.append((key, v if n >= 2 or old is None else old))
+            self._score_seen[key] = now
+        # rows not read this time stay a few seconds (OCR misses one now and then)
+        got = {k for k, _ in fresh}
+        fresh += [(k, v) for k, v in m.scores if k not in got and now - self._score_seen.get(k, 0) <= SCORE_KEEP]
+        fresh.sort(key=lambda kv: (not kv[0][1:].isdigit(), int(kv[0][1:]) if kv[0][1:].isdigit() else 0))
         m.scores = fresh
+        if o.count:
+            m.cutoff = o.count
         out = []
+        if o.other:
+            # your team, as the board marks it: taken once it's been the same row twice running
+            key, n = self._team_read
+            self._team_read = (o.other, n + 1 if key == o.other else 1)
+            if self._team_read[1] >= 2 and (m.team, m.team_sure) != (o.other, True):
+                m.team, m.team_sure = o.other, True
+                out.append(Event("team", text=o.other))
+            return out
         if self._before_kill is not None and now - self._kill_t <= 6.0:
             for key, v in fresh:
                 before = self._before_kill.get(key)
@@ -435,7 +475,7 @@ class Tracker:
                     m.votes[key] += 1
                     self._before_kill = None                 # one vote per elimination
                     break
-        if m.votes:
+        if m.votes and not (m.team_sure and self._team_read[1] >= 2):
             team, n = m.votes.most_common(1)[0]
             sure = n >= 2 or len(m.votes) == 1
             if (team, sure) != (m.team, m.team_sure):
@@ -446,6 +486,29 @@ class Tracker:
         return out
 
     # ------------------------------------------------------------------ learning your name
+    def _self_name(self, o: Observation) -> list[Event]:
+        """Your name as the HUD writes it under your health. Taken once it's been read the same way in enough
+        frames (and most of them); replaced only by a reading that's been seen far more often."""
+        if self.dead or self.match is None:
+            return []                                        # watching someone else
+        key = name_key(o.other)
+        if len(key) < 3:
+            return []
+        self.self_reads[key] += 1
+        self._spellings[(key, o.other)] += 1
+        top, n = self.self_reads.most_common(1)[0]
+        total = sum(self.self_reads.values())
+        if top != key or n < SELF_READS or n < 0.75 * total:
+            return []
+        current = name_key(self.learned_name)
+        if current == key:
+            return []
+        if current and self.self_reads.get(current, 0) * 2 > n:
+            return []
+        name = max((sp for sp in self._spellings.items() if sp[0][0] == key), key=lambda sp: sp[1])[0][1]
+        self.learned_name = name                             # as it's most often written
+        return [Event("name", text=name)]
+
     def _learn(self, now: float) -> list[Event]:
         """The tally says you eliminated V and the feed says K eliminated V at the same moment: K is you.
         (Or the death screen says K eliminated you and the feed says K eliminated X: X is you.) Twice the same,

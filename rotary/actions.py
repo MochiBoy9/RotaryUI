@@ -185,7 +185,6 @@ DEFAULT_CONFIG = {
         "rate": 3,               # looks a second
         "notch_stats": ["kills", "deaths", "assists", "lead"],
         "show_over_game": True,  # the notch stays up over a borderless game while a match is on
-        "flash": True,           # each elimination, death… slides in on the notch
         "zones": {},             # zone → [left, top, right, bottom], 0–1: where on the screen it reads
         "words": {},             # more phrases to look for, per kind (e.g. another language's)
     },

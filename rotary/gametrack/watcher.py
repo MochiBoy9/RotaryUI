@@ -14,34 +14,75 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .. import DATA_DIR, WIN
 from . import RESULT_WORDS, STAT_CHOICES, capture, names_for, notch_line, ocr, profile, settings, stat_value
 from .engine import STATS, Event, Tracker, ordinal
-from .profile import Observation, Profile
+from .profile import Observation, Profile, Zone
 from .store import Store
-from .text import Word, rows_from
+from .text import Row, Word, rows_from
 
 log = logging.getLogger(__name__)
 DB_PATH = DATA_DIR / "game_stats.sqlite3"
 DEBUG_DIR = DATA_DIR / "gametrack"
 
 
+def zones_of(prof: Profile, overrides: dict | None = None) -> dict[str, Zone]:
+    """The profile's zones, moved where config.json says ("gametrack" → "zones": {name: [left, top, right,
+    bottom]}); a moved zone keeps the rest of how it's read."""
+    out = dict(prof.zones)
+    for name, value in (overrides or {}).items():
+        z = Zone.of(value)
+        if z is None:
+            continue
+        try:
+            given = len(value)
+        except TypeError:
+            continue
+        out[name] = prof.zones[name]._replace(**{f: z[i] for i, f in enumerate(Zone._fields[:given])}) \
+            if name in prof.zones else z
+    return out
+
+
+def _level(pix, angle: float, slant: float = 0.0):
+    """`pix` turned by `angle` degrees about its middle (to level tilted text) and sheared to stand italic
+    letters up, and the matrix that takes its points back to where they were."""
+    import cv2
+    import numpy as np
+    h, w = pix.shape[:2]
+    turn = np.vstack([cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0), [0, 0, 1]])
+    shear = np.array([[1.0, slant, -slant * h / 2], [0, 1, 0], [0, 0, 1]])
+    m = (shear @ turn)[:2]
+    return cv2.warpAffine(pix, m, (w, h), borderMode=cv2.BORDER_REPLICATE), cv2.invertAffineTransform(m)
+
+
 def read_frame(frame, prof: Profile, engine: ocr.Engine, ctx: dict, zones: dict | None = None) \
         -> tuple[list[Observation], dict[str, list[str]]]:
-    """OCR each zone of one frame and read it: (observations, the text of each zone row by row)."""
+    """OCR each zone of one frame and read it: (observations, the text of each zone row by row). Boxes come
+    back in the frame's pixels; a tilted zone's rows are its levelled rows. ctx["frame_no"] (counting frames)
+    skips the zones read only every so often."""
     h, w = frame.shape[:2]
     scale = ocr.scale_for(h)
+    n = int(ctx.get("frame_no", 0) or 0)
     by_zone, texts = {}, {}
-    for name, zone in {**prof.zones, **(zones or {})}.items():
-        try:
-            z = tuple(float(v) for v in zone)
-            if len(z) != 4:
-                continue
-        except (TypeError, ValueError):
+    for name, z in zones_of(prof, zones).items():
+        if n % max(1, z.every):
             continue
-        pix, x0, y0 = capture.crop(frame, z)
-        found = engine.read(pix, scale)
-        rows = rows_from([Word(wd.text, wd.x + x0, wd.y + y0, wd.w, wd.h) for wd in found])
-        by_zone[name] = rows
-        texts[name] = [" | ".join(r.segment_texts()) for r in rows]
-    return prof.read(by_zone, (w, h), ctx), texts
+        pix, x0, y0 = capture.crop(frame, z[:4])
+        back = None
+        if z.angle or z.slant:
+            pix, back = _level(pix, z.angle, z.slant)
+        found = engine.read(pix, scale * z.scale, z.block)
+        # rows are made in the levelled picture, then each word is put back where it is on the frame
+        on_frame = {}
+        for wd in found:
+            dx = dy = 0.0
+            if back is not None:
+                cx, cy = wd.x + wd.w / 2, wd.y + wd.h / 2
+                dx = back[0, 0] * cx + back[0, 1] * cy + back[0, 2] - cx
+                dy = back[1, 0] * cx + back[1, 1] * cy + back[1, 2] - cy
+            on_frame[id(wd)] = Word(wd.text, wd.x + dx + x0, wd.y + dy + y0, wd.w, wd.h)
+        moved = [Row([on_frame[id(wd)] for wd in r.words], [[on_frame[id(wd)] for wd in seg] for seg in r.segments])
+                 for r in rows_from(found)]
+        by_zone[name] = moved
+        texts[name] = [" | ".join(r.segment_texts()) for r in moved]
+    return prof.read(by_zone, (w, h), {**ctx, "frame": frame}), texts
 
 
 class _Reader(threading.Thread):
@@ -58,6 +99,7 @@ class _Reader(threading.Thread):
     def run(self) -> None:
         engine = ocr.best_engine()
         self.owner.ocr_name, self.owner.ocr_error = engine.name, ("" if engine.available() else engine.error)
+        count = 0
         try:
             while not self.stop_flag.is_set():
                 cfg = self.owner.cfg_fn()
@@ -78,7 +120,9 @@ class _Reader(threading.Thread):
                 else:
                     frame, status = self._frame(prof, force=shot is not None)
                 if frame is not None and engine.available():
-                    ctx = {"names": names_for(cfg), "words": s.get("words") or {}}
+                    count += 1
+                    ctx = {"names": names_for(cfg), "words": s.get("words") or {},
+                           "frame_no": 0 if shot is not None else count}   # a check reads every zone
                     try:
                         obs, texts = read_frame(frame, prof, engine, ctx, s.get("zones") or {})
                     except Exception as e:
@@ -312,7 +356,8 @@ class GameWatcher(QObject):
             m = tr.match
             st = m.standing(prof)
             return {"state": "playing", "game": prof.name, "mode": tr.mode_name(m.mode), "seconds": m.seconds(now),
-                    "dead": tr.dead, "line": notch_line(keys, m.stats, st, m.seconds(now)) or "Tracking",
+                    "dead": tr.dead, "killer": tr.killer if tr.dead else "",
+                    "line": notch_line(keys, m.stats, st, m.seconds(now)) or "Tracking",
                     "tiles": self._tiles(keys, m.stats, st, m.seconds(now)), "round": m.round, "final": m.final,
                     "manual": m.manual, "status": self.status, "sure": st.get("sure", True) if st else True}
         if tr.last is not None and self.summary_open:

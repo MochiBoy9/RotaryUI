@@ -94,13 +94,15 @@ def distance(a: str, b: str, limit: int = 99) -> int:
 
 
 def similar(a: str, b: str) -> bool:
-    """The same word, as OCR may have read it: folded alike, and at most one letter in five off."""
+    """The same word, as OCR may have read it: folded alike, and at most one letter in six off. No looser:
+    "ELIMINATION" (the tally) and "ELIMINATED" (the headline, the death bar) are two letters apart, as are
+    "ASSIST" and "ASSISTED"."""
     fa, fb = fold(a), fold(b)
     if not fa or not fb:
         return False
     if fa == fb:
         return True
-    allowed = len(fb) // 5          # "ASSIST": 1, "ELIMINATION": 2, "WIN": 0
+    allowed = len(fb) // 6          # "ASSIST": 1, "ELIMINATION": 1, "WIN": 0, "ELIMINATEDBY": 2
     return allowed > 0 and distance(fa, fb, allowed) <= allowed
 
 
@@ -112,11 +114,30 @@ def find_phrase(tokens: list[str], phrase: str) -> tuple[int, int] | None:
     for i in range(len(tokens)):
         if i + n <= len(tokens) and all(similar(tokens[i + k], want[k]) for k in range(n)):
             return i, i + n
-        # run together ("ELIMINATEDBY") or split ("ELIMI NATED"): compare a few tokens joined up
+        # run together ("ELIMINATEDBY") or split ("ELIMI NATED"): compare a few tokens joined up. As long as
+        # the phrase, give or take a letter, so "ELIMINATED" alone isn't "ELIMINATED BY" missing its "BY".
+        whole = fold("".join(want))
         for j in range(i + 1, min(len(tokens), i + n + 2) + 1):
-            if similar("".join(tokens[i:j]), "".join(want)):
+            joined = "".join(tokens[i:j])
+            if abs(len(fold(joined)) - len(whole)) <= 1 and similar(joined, "".join(want)):
                 return i, j
     return None
+
+
+def run_in(tokens: list[str], phrase: str) -> bool:
+    """Is `phrase` somewhere inside one long run of letters ("TEAMIRESPAWNINGIN12": OCR lost the spaces)?
+    For phrases of 8 letters or more, so short words don't turn up inside names."""
+    want = fold(phrase.replace(" ", ""))
+    n = len(want)
+    if n < 8:
+        return False
+    allowed = n // 6
+    for t in tokens:
+        hay = fold(t)
+        for i in range(0, max(0, len(hay) - n) + 1):
+            if distance(hay[i:i + n], want, allowed) <= allowed:
+                return True
+    return False
 
 
 def has_phrase(tokens: list[str], phrase: str) -> bool:
@@ -160,8 +181,10 @@ def same_player(a: str, b: str) -> bool:
 
 def best_name(text: str) -> str:
     """The likeliest player name in a feed segment: its longest word (names have no spaces; the rest is an
-    icon read as letters, a squad tag…)."""
-    words = [w.strip(" +:·-[]()") for w in str(text or "").split()]
+    icon read as letters, a club tag in its box: "[PR75] SweetSpicySalty")."""
+    raw = str(text or "").split()
+    untagged = [w for w in raw if not (w[:1] in "[(" or w[-1:] in "])")]
+    words = [w.strip(" +:·-[]()") for w in (untagged or raw)]
     return max(words, key=lambda w: len(clean(w)), default="")
 
 
@@ -221,3 +244,28 @@ def count_mark(tokens: list[str]) -> int:
             if 1 <= n <= 12:
                 return n
     return 1
+
+
+_BOARD_CASH = re.compile(r"^[$S8]?(\d{1,3}(?:,\d{3})*)$")
+_CASHLIKE = re.compile(r"^[$S8]?[0-9O,.;]+$")
+
+
+def board_cash(text: str) -> int | None:
+    """A team's cash as the scoreboard writes it, read by OCR: "$37,500", but also "s37,500" or "837,500" (the
+    "$" read as a letter or an 8; team cash is never in the hundreds of thousands) and "S0" / "80" for "$0"."""
+    t = str(text or "").strip(" |()[]'‘’\"`:").upper()
+    if not _CASHLIKE.match(t) or not (re.search(r"\d", t) or t in ("$O", "SO")):
+        return None                                     # a word, a badge…
+    t = t.replace(".", ",").replace(";", ",").replace("O", "0")
+    vals = cash_values(t)
+    if vals and t.startswith("$"):
+        return vals[0]
+    m = _BOARD_CASH.match(t)
+    if m is None:
+        return None
+    digits = m.group(1)
+    if t[0] in "S8" and t[0] != digits[0]:
+        return int(digits.replace(",", ""))
+    if t[0] == "8" and ("," in t and len(t.split(",")[0]) in (2, 3) or t == "80"):
+        return int(t[1:].replace(",", "") or 0)         # "810,000" → $10,000; "80" → $0
+    return None if "," not in t else int(t.replace(",", ""))

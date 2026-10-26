@@ -26,7 +26,6 @@ DEFAULTS = {
     "rate": 3,                    # looks a second
     "notch_stats": ["kills", "deaths", "assists", "lead"],
     "show_over_game": True,       # the notch stays up over the game (borderless) while a match is on
-    "flash": True,                # each elimination, death… slides in on the notch
     "zones": {},                  # zone → [left, top, right, bottom] (0–1), to move where it reads
     "words": {},                  # more phrases per kind ("dead": ["ELIMINADO POR"]) for other languages
 }

@@ -27,18 +27,24 @@ def prepare(img: np.ndarray, scale: float) -> np.ndarray:
 
     HUD text is small, bright and thin, over a picture that can be just as bright (a sky, an explosion). A
     white top-hat keeps what's bright compared with its surroundings at the size of letters and drops big
-    bright areas; the brightest channel is used so coloured names (red enemies, blue teammates) stay in."""
+    bright areas. It's taken on the brightest channel, so coloured names (red enemies, blue teammates) stay in,
+    and on the dimmest, so white letters on a red or blue plate (the death bar, your team's row) stand out."""
     import cv2
     if img.ndim == 3:
         b, g, r = cv2.split(np.ascontiguousarray(img[..., :3]))
-        grey = cv2.max(cv2.max(b, g), r)
+        greys = [cv2.max(cv2.max(b, g), r), cv2.min(cv2.min(b, g), r)]
     else:
-        grey = img
-    if scale != 1.0:
-        grey = cv2.resize(grey, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-    grey = cv2.GaussianBlur(grey, (3, 3), 0)               # sensor-like grain, film grain
+        greys = [img]
     size = int(MIN_TEXT_PX * 3.5) | 1                      # bigger than the banners' letters
-    hat = cv2.morphologyEx(grey, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (size, size)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
+    hat = None
+    for grey in greys:
+        if scale != 1.0:
+            interp = cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA
+            grey = cv2.resize(grey, None, fx=scale, fy=scale, interpolation=interp)
+        grey = cv2.GaussianBlur(grey, (3, 3), 0)           # sensor-like grain, film grain
+        h1 = cv2.morphologyEx(grey, cv2.MORPH_TOPHAT, kernel)
+        hat = h1 if hat is None else cv2.max(hat, h1)
     _t, mask = cv2.threshold(hat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     mask[hat < 60] = 0                                     # Otsu on a frame with no text finds "text" in noise
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))     # specks
@@ -60,8 +66,9 @@ class Engine:
     def available(self) -> bool:
         return False
 
-    def read(self, img: np.ndarray, scale: float = 1.0) -> list[Word]:
-        """Words in `img` (BGR or BGRA), with boxes in its own pixels."""
+    def read(self, img: np.ndarray, scale: float = 1.0, block: bool = False) -> list[Word]:
+        """Words in `img` (BGR or BGRA), with boxes in its own pixels. `block`: it's a few big lines (a banner),
+        not words scattered about."""
         return []
 
     def close(self) -> None:
@@ -97,7 +104,7 @@ class WindowsOcr(Engine):
     def available(self) -> bool:
         return self._engine is not None
 
-    def read(self, img: np.ndarray, scale: float = 1.0) -> list[Word]:
+    def read(self, img: np.ndarray, scale: float = 1.0, block: bool = False) -> list[Word]:
         if self._engine is None:
             return []
         from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
@@ -142,14 +149,15 @@ class Tesseract(Engine):
     def available(self) -> bool:
         return bool(self.exe)
 
-    def read(self, img: np.ndarray, scale: float = 1.0) -> list[Word]:
+    def read(self, img: np.ndarray, scale: float = 1.0, block: bool = False) -> list[Word]:
         import cv2
         ok, png = cv2.imencode(".png", prepare(img, scale))
         if not ok:
             return []
         flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}     # no console window
         try:
-            r = subprocess.run([self.exe, "stdin", "stdout", "--psm", "11", "tsv"], input=png.tobytes(),
+            psm = "6" if block else "11"
+            r = subprocess.run([self.exe, "stdin", "stdout", "--psm", psm, "tsv"], input=png.tobytes(),
                                capture_output=True, timeout=10, **flags)
         except (OSError, subprocess.TimeoutExpired) as e:
             self.error = str(e)

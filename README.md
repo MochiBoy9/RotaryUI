@@ -290,34 +290,44 @@ Studios), the one game it knows for now: eliminations, deaths, assists, revives,
 behind your team is and what it takes to lead (or to qualify, in a Cashout tournament), and how each match
 ended.
 
-- **On the notch**: a crosshair and up to four stats you pick (*K 5  D 2  A 1  +$2.5k*). Each elimination, death,
-  assist and revive slides in for a moment. Hover for every stat, with buttons to add one by hand or end the
-  match. It stays up over the game while a match is on (Borderless or Windowed; never over exclusive full
-  screen).
-- **End of a match**: a summary (Victory, Defeat, a placement, or which round you went out in) that stays until
-  the next match starts. When the result is a best guess (a WINNER banner can be about another team), it says
-  so, with *It was a win* / *It was a loss* to put it right.
+- **On the notch**: a crosshair and up to four stats you pick (*K 5  D 2  A 1  +$2.5k*), kept small while you
+  play: nothing slides in and hovering doesn't open it. It opens by itself only when you're eliminated (who by,
+  every stat, buttons to add one by hand or end the match) and when the match ends. It stays up over the game
+  while a match is on (Borderless or Windowed; never over exclusive full screen).
+- **End of a match**: a summary (Victory, a placement, QUALIFIED rounds, or which round you went out in) that
+  stays until the next match starts. Back in the menus without a win or placement on screen counts as a loss,
+  marked as a best guess with *It was a win* / *It was a loss* to put it right (as is a WINNER banner, which can
+  be about another team).
 - **By hand, any time**: start or end a match, say how it ended, add or take away an elimination, death, assist
-  or revive, from the notch's hover card, its right-click menu (*Game tracking*) or the Game tracking page.
+  or revive, from the notch's right-click menu (*Game tracking*), its card while you're out, or the Game
+  tracking page.
 - **History**: every match is kept in `game_stats.sqlite3` in the settings folder, with totals (wins, K/D…) on
   the page and *Export CSV…*.
 
 How it reads the game: a few times a second, while THE FINALS is the window in front, it copies the game's
-window from the screen and reads three parts of it with the OCR built into Windows (Tesseract elsewhere):
+window from the screen and reads parts of it with the OCR built into Windows (Tesseract elsewhere). Season 12's
+HUD leans in at the sides and its fonts are italic, so the corners are levelled and the letters stood up first,
+and white text on the red death bar is read as well as light text on the game:
 
 | Where | What it looks for |
 | --- | --- |
-| Elimination feed (top right) | `KILLER [weapon] VICTIM`. With your name set (or learned), you on the left is your elimination, on the right your death, in between an assist. |
-| Crosshair tally and the middle of the screen | ELIMINATION (with the name, and `×2` when entries merge), ASSIST, REVIVE, TEAM WIPE; the death screen (ELIMINATED BY…, the respawn countdown, waiting for a revive, spectating) and REVIVED BY; the end-of-round banners (VICTORY, DEFEAT, WINNER, QUALIFIED, ELIMINATED, 1ST–12TH PLACE) and mode names. |
-| Across the top | Each team's cash and the round timer (the in-match HUD), and the menus (PLAY, LOADOUT, CAREER…: the match is over). |
+| Elimination feed (top right) | `Killer [weapon] > Victim`, club tags (`[PR75]`) dropped. With your name set (or learned), you on the left is your elimination, on the right your death. |
+| Under the crosshair | The headline `ELIMINATED Tempest` (`ASSISTED` for an assist) and the tally `ELIMINATION \| +250`, `ASSIST`, `REVIVE`, `TEAM WIPE` with their points. Markers in the world aren't you: REVIVE over a statue, CASHOUT $10000, the stadium's ELIMINATION STREAK, CASHOUT STOLEN. |
+| The death screen | The red bar (`ELIMINATED BY: NAME`, TEAM RESPAWNING IN, FREE CAMERA) and the card on the right (ELIMINATED BY, the damage each way); REVIVED BY. |
+| Teams' cash (top left) | Each team's cash by rank; a yellow `+ $18,000` is cash on its way to a cashout, not banked yet. Your team is the one with its rank in the blue box; KNOCKOUT ZONE says how many go through. |
+| Bottom left | Your name, under your health (`250/250`): read there, it's learned without you typing it. |
+| The middle, big | QUALIFIED, VICTORY, DEFEAT, a lone ELIMINATED, WINNER, 1ST–12TH PLACE, and mode names. |
+| Top middle | The round's clock (`12:39`, `+0:17` in overtime) means a match is on; the menus (PLAY, LOADOUT, CAREER…) that it's over. |
 
 So that nothing counts twice or by mistake, a thing counts only once it's been read in two frames, counts once
-for as long as it stays on screen, and the feed and the tally sighting of one elimination (or the feed line and
-the death screen of one death) are merged. Being down is a state: the respawn countdown doesn't add deaths.
-Your team on the scoreboard is the one whose cash goes up by $500 (or $1,000) right after your elimination.
+for as long as it stays on screen, and the feed, headline and tally sightings of one elimination (or the feed
+line and the death screen of one death) are merged. Being out is a state: the respawn countdown doesn't add
+deaths, and while you're out only the feed can add an elimination or assist (the middle of the screen may be
+showing the teammate you're watching).
 
-Without a name, it still counts what only shows for you (the tally and the death screen), and learns your name
-when the tally and the feed name the same player at the same moment, twice. Set your name for the best results.
+Your name is learned from under your health once it's been read the same way for a few seconds (not while
+you're watching someone else), or when the tally and the feed name the same player at the same moment, twice.
+Setting it yourself is still the surest.
 
 Notes:
 

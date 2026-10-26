@@ -2637,9 +2637,8 @@ class GamesPage(QWidget):
         c.add(grid)
         self.over = Switch(bool(g["show_over_game"]))
         c.add(Row("Keep it up over the game", "While a match is on (Borderless or Windowed; never over exclusive "
-                                              "full screen)", self.over))
-        self.flash = Switch(bool(g["flash"]))
-        c.add(Row("Slide in each elimination and death", "And when a match starts or ends", self.flash))
+                                              "full screen). The stats stay small while you play; it opens by "
+                                              "itself when you're eliminated and when the match ends", self.over))
         v.addWidget(c)
 
         c = Card("This match", "Everything can be done by hand: start a match, put a count right, end it with "
@@ -2755,7 +2754,6 @@ class GamesPage(QWidget):
         self.names.editingFinished.connect(self._names)
         self.learn.toggled.connect(lambda on: self._set("learn_name", on))
         self.over.toggled.connect(lambda on: self._set("show_over_game", on))
-        self.flash.toggled.connect(lambda on: self._set("flash", on))
         self.game.currentIndexChanged.connect(lambda _i: self._set("game", self.game.currentData()))
         self.watch.checked.connect(self._checked)
         self._timer = QTimer(self)
@@ -2861,7 +2859,6 @@ class GamesPage(QWidget):
         self.auto.set_silent(bool(g["auto_matches"]))
         self.learn.set_silent(bool(g["learn_name"]))
         self.over.set_silent(bool(g["show_over_game"]))
-        self.flash.set_silent(bool(g["flash"]))
         self.rate.set_value(str(int(g["rate"])))
         full = len(g["notch_stats"]) >= gametrack.MAX_NOTCH_STATS
         for key, cb in self.checks.items():

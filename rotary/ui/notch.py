@@ -25,8 +25,9 @@ tests"); hover for every agent and what it's doing right now. When one has a que
 amber "?" — hover it to answer: its options as buttons, or Reply… to type an answer.
 
 Active Game Tracking (see rotary/gametrack) puts your match on it: a crosshair and the stats you picked
-("K 5  D 2  A 1  +$2.5k"), each elimination or death sliding in for a moment, and on hover every stat with
-buttons to fix one by hand or end the match. When a match ends its summary stays until the next one starts.
+("K 5  D 2  A 1  +$2.5k"), kept small while you play. It opens by itself only when you're eliminated (who by,
+every stat, buttons to fix one by hand or end the match) and when the match ends (its summary, which stays until
+the next one starts); right-click for the rest.
 """
 from __future__ import annotations
 
@@ -59,7 +60,6 @@ HOVER_HINT = "Click to open wheel"
 HOVER_HINT_SECONDS = 0.9           # a hover this long, with nothing else on the notch, shows the hint
 AGENT_FLASH_SECONDS = 4.0          # an agent's new step stays on the notch this long
 AGENT_ROWS = 3                     # agents listed on the hover card
-GAME_FLASH_SECONDS = 2.6           # an elimination, a death… stays on the notch this long
 GAME_COLOR, GAME_DEAD, GAME_GOLD = "#FF6B3D", "#FF453A", "#FFD60A"
 EDGES = ("top", "bottom", "left", "right")
 AWAY = {"top": (0, 1), "bottom": (0, -1), "left": (1, 0), "right": (-1, 0)}   # from each edge into the screen
@@ -186,7 +186,6 @@ class NotchWindow(QWidget):
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._flash_over)
         self.reply_box: ReplyBox | None = None
-        self._flash_kind = "agent"       # whose news is sliding in: an agent's or the game's
         # Active Game Tracking: the match on now, or the last one's summary (GameWatcher.snapshot())
         self.game: dict | None = None
         self.game_enabled = False        # tracking is on (the menu offers to turn it on or off)
@@ -602,13 +601,11 @@ class NotchWindow(QWidget):
             self.fade.target = 1.0
         self._retarget()
 
-    def _flash(self, text: str, kind: str = "agent") -> None:
-        seconds = GAME_FLASH_SECONDS if kind == "game" else AGENT_FLASH_SECONDS
+    def _flash(self, text: str) -> None:
         self._prev_text = self._shown_text()
         self._flash_text = text
-        self._flash_kind = kind
-        self._flash_until = time.monotonic() + seconds
-        self._flash_timer.start(int(seconds * 1000) + 30)
+        self._flash_until = time.monotonic() + AGENT_FLASH_SECONDS
+        self._flash_timer.start(int(AGENT_FLASH_SECONDS * 1000) + 30)
         self.fade.snap(0.0)
         self.fade.target = 1.0
 
@@ -678,12 +675,6 @@ class NotchWindow(QWidget):
         self.game_enabled = bool(enabled)
         if snap != self.game:
             self.game = snap
-            self._retarget()
-
-    def game_flash(self, text: str) -> None:
-        """An elimination, a death, a match ending: slides in for a moment (not over a question)."""
-        if text and self.question() is None and self.answer is None:
-            self._flash(text, "game")
             self._retarget()
 
     def _game_cmd(self, cmd: str, arg=None) -> None:
@@ -756,11 +747,15 @@ class NotchWindow(QWidget):
 
     def _card_kind(self) -> str:
         """Which detailed card a hover shows ('' = none: the resting notch, or a one-line label). A ringing call
-        shows its card without a hover."""
+        shows its card without a hover, and so does the game's when you're out or the match is over; while
+        you're playing its stats stay on the notch, hover or not."""
         if self._moving or self._drag is not None and self._drag["moved"]:
             return ""
         if self.incoming() is not None:
             return "incoming"
+        if self._game_open() and not self.status_text and self.status_progress is None and (
+                self.question() is None or not self.hovered) and (self.answer is None or not self.hovered):
+            return "game"
         if self.hovered and self.question() is not None:
             return "question"
         if self.hovered and self.answer is not None:
@@ -770,7 +765,12 @@ class NotchWindow(QWidget):
         act = self.activity()
         if act == "agent":
             return "agents"
-        return act if act in ("media", "timer", "call", "game") else ""
+        return act if act in ("media", "timer", "call") else ""
+
+    def _game_open(self) -> bool:
+        """The game's card opens by itself: you've been eliminated, or the match is over (its summary)."""
+        g = self.game
+        return g is not None and self.activity() == "game" and (g.get("state") == "ended" or bool(g.get("dead")))
 
     # ------------------------------------------------------------------ geometry
     def _resize_window(self) -> None:
@@ -1352,8 +1352,6 @@ class NotchWindow(QWidget):
             ic = QPointF(rect.left() + 20 * s, cy)
             if self.status_text or self.status_progress is not None:
                 self._indicator(p, ic)
-            elif self._flash_kind == "game" and (self.flash_text() or (self._prev_text and not text)):
-                self._game_icon(p, ic, 9 * s)
             elif self.flash_text() or (self._prev_text and not text and self.lead_agent() is not None):
                 self._agent_icon(p, ic, self.lead_agent(), 9 * s)
             elif self.activity() == "clip":
@@ -1827,8 +1825,9 @@ class NotchWindow(QWidget):
         self._game_icon(p, QPointF(x + 7 * s, y + 9 * s), 7.5 * s)
         head = " · ".join(t for t in (g.get("game", ""), g.get("mode", ""), mmss(g.get("seconds", 0))) if t)
         if g.get("state") == "playing":
-            side = "Down" if g.get("dead") else ("Final round" if g.get("final") else
-                                                  (f"Round {g['round']}" if g.get("round", 1) > 1 else ""))
+            killer = g.get("killer", "")
+            side = ((f"Eliminated by {killer}" if killer else "Eliminated") if g.get("dead") else
+                    ("Final round" if g.get("final") else (f"Round {g['round']}" if g.get("round", 1) > 1 else "")))
         else:
             side = "Best guess: check it" if g.get("estimated") else "Waiting for the next game"
         sw = hfm.horizontalAdvance(side) + 4 if side else 0

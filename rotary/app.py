@@ -848,31 +848,10 @@ class RotaryApp(QObject):
             page.refresh_live()
 
     def _on_game_event(self, e) -> None:
-        """An elimination, a death, a match starting or ending: a moment on the notch."""
-        if not gametrack.settings(self.cfg)["flash"] or (e.kind == "stat" and e.text == "Changed by hand"):
-            return
-        who = f" · {e.text}" if e.text else ""
-        text = ""
-        if e.kind == "stat":
-            text = {"kills": f"Elimination{who}", "deaths": f"Eliminated{' by ' + e.text if e.text else ''}",
-                    "assists": "Assist", "revives": f"Revive{who}", "wipes": "Team wipe",
-                    "revived": f"Revived{' by ' + e.text if e.text else ''}"}.get(e.stat, "")
-        elif e.kind == "match_start":
-            text = f"Tracking {e.text or gametrack.profile(self.cfg).name}"
-        elif e.kind == "match_end":
-            snap = self.game_watch.snapshot()
-            text = snap["line"] if snap else "Match over"
+        """The tracker's news. The notch doesn't slide anything in (the stats stay on it, and its card opens by
+        itself when you're out or the match is over): a sound at the end of a match."""
+        if e.kind == "match_end":
             self.sounds.play("confirm")
-        elif e.kind == "round":
-            text = e.text
-        elif e.kind == "name":
-            text = f"Reading the feed for {e.text}"
-        if text:
-            if self._fullscreen and self.notch.isHidden() and self._fs_state == 2:
-                self._alert_until = time.monotonic() + 3.0      # pop up over a borderless game for a moment
-                self._update_notch()
-                QTimer.singleShot(3300, self._update_notch)
-            self.notch.game_flash(text)
 
     def _on_game_command(self, cmd: str, arg) -> None:
         w = self.game_watch
