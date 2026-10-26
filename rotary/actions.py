@@ -167,6 +167,14 @@ DEFAULT_CONFIG = {
         "look": "dark",          # dark | glass
         "alerts_over_games": True,
     },
+    "agents": {                  # AI agents on the notch (agents.py)
+        "enabled": True,         # the local server Claude Code, Codex, MCP clients and models report to
+        "port": 47823,           # on 127.0.0.1 only
+        "token": "",             # the secret every address starts with (made at first start)
+        "ask_seconds": 120,      # how long a question waits on the notch before the agent asks the usual way
+        "flash": True,           # each new step slides in on the notch for a moment
+        "proxies": {},           # name → base URL: more model services for the pass-through
+    },
     "integrations": {"obs": {"host": "localhost", "port": 4455}},
     "camera": {
         "preferred": "",
@@ -183,6 +191,10 @@ DEFAULT_CONFIG = {
         "seconds": 20,           # how long the answer stays on the notch
         # win+alt+a | ctrl+alt+a | ctrl+shift+a | off. Not Ctrl + Alt + a letter on Windows: that's AltGr there.
         "hotkey": "ctrl+alt+a" if MAC else "win+alt+a",
+        "glow": "siri",          # the screen's edges glow while the AI answers: siri | aurora | sunset | custom | off
+        "glow_colors": ["#3D7BFF", "#7A5CFF", "#BF5AF2"],   # the colours of "custom"
+        "note": "",              # a note that always goes with the screenshot ("I'm in Chemistry 101")
+        "ask_note": False,       # ask for a note (optional) each time, before looking at the screen
     },
 }
 

@@ -16,13 +16,13 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QObject, QFileSystemWatcher, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QConicalGradient, QFont, QFontMetricsF,
+from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QConicalGradient, QCursor, QFont, QFontMetricsF,
                            QGuiApplication, QIcon, QLinearGradient, QPainter, QPen, QPixmap, QRadialGradient)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from . import (DATA_DIR, LINUX, T0, WIN, __version__, assist, environment, integrations, keys, modes, system,
-               tutorial, update, winapi)
+from . import (DATA_DIR, LINUX, T0, WIN, __version__, agents, assist, environment, integrations, keys, modes,
+               system, tutorial, update, winapi)
 from .actions import (CONFIG_PATH, Item, back_item, build_items, cleanup_scripts, execute, item_from, load_config,
                       save_config)
 from .feedback import Sounds, Speaker
@@ -35,7 +35,9 @@ from .gestures import GestureEngine, GestureSettings, HandednessTracker, HandFea
 from .tracker import CameraStatus, TrackerThread, TrackResult
 from .ui.dial import CORNERS, DialWindow, VolumeRing
 from .ui.glass import TEXT, family, font, load_fonts, set_text_font
+from .ui.glow import ScreenGlow
 from .ui.notch import NotchWindow
+from .ui.note import NoteBox
 from .ui.pill import AMBER, BLUE, GRAY, GREEN, RED, PillWindow
 
 log = logging.getLogger(__name__)
@@ -66,6 +68,7 @@ def fullscreen_app_running() -> bool:
 
 # --------------------------------------------------------------------------- global hotkeys
 MOD_NOREPEAT = 0x4000
+FRONT_SECONDS = 30.0               # what the notch saw in front is trusted this long (another app may come up)
 VIDEO_TICKS = 120                  # a video ring is this many steps long: one full turn, start to end
 SLIDES_TINT, VIDEO_TINT, VOLUME_TINT = "#FF9F0A", "#FF375F", "#0A84FF"
 VOLUME_TICKS = 25                  # a volume ring: a full turn from silent to full, 4 % a click
@@ -333,6 +336,7 @@ class RotaryApp(QObject):
     volume_level = Signal(float)           # the volume slider set this level (-1: unknown)
     volume_read = Signal(float)            # the level when the rotary opened from the mouse / keyboard
     resize_window = Signal(object)         # two-hand resize began on this ActiveWindow (None: nothing to resize)
+    agents_changed = Signal()              # an AI agent's status or question changed (agents.py, any thread)
 
     def __init__(self, app: QApplication, show_window: bool | None = None):
         super().__init__()
@@ -364,12 +368,28 @@ class RotaryApp(QObject):
         self.pill = PillWindow()
         self.notch = NotchWindow()
         self.notch.clicked.connect(self._on_notch_click)
+        self.notch.approached.connect(self._on_notch_approach)
         self.notch.scrolled.connect(self._on_notch_scroll)
         self.notch.customize.connect(lambda: self.show_window("notch"))
         self.notch.timer_done.connect(self._on_timer_done)
         self.notch.assist.connect(self.start_assist)
+        self.notch.assist_note.connect(self.ask_with_note)
         self._assist_busy = False
         self._assist_until = 0.0           # keeps the notch up for a screen-assist message
+        self._assist_note = ""             # this time's note for the AI (the note box)
+        self.glow = ScreenGlow()           # the screen's edges glow while the AI answers
+        self.note_box = NoteBox()
+        self.note_box.asked.connect(lambda note: self.start_assist(note))
+        # AI agents: Claude Code, Codex, MCP clients and models report to a local server; the notch shows them
+        self.agent_hub = agents.Hub(self.agents_changed.emit)
+        self.agent_bridge = agents.Bridge(self.agent_hub, lambda: self.cfg)
+        self.agents_changed.connect(self._on_agents_changed)
+        self.notch.agent_answer.connect(self.agent_hub.answer)
+        self._asking = False               # an agent's question is on the notch
+        self._agents_timer = QTimer(self)  # forget agents that went quiet
+        self._agents_timer.setInterval(60_000)
+        self._agents_timer.timeout.connect(self._on_agents_changed)
+        self._agents_timer.start()
         self.live = LiveWatcher(self)
         self.live.state.connect(self.notch.set_live)
         self.live.state.connect(self._on_live_state)
@@ -401,6 +421,8 @@ class RotaryApp(QObject):
         self._main_sel = 0                 # where the item ring was, to go back to it
         self._mode_moved = 0.0             # last time the user turned a mode ring
         self._mode_n = 1
+        self._front: tuple[float, modes.Context] | None = None   # in front as the pointer reached the notch
+        self._open_ctx: modes.Context | None = None              # …handed to the open it led to
         self._slides: tuple[int, int] | None = None   # (current, count) once the app has said
         self._np = None                    # the video: NowPlaying from the media controls
         self._np_read = 0.0
@@ -767,11 +789,41 @@ class RotaryApp(QObject):
         self.notch.set_hotkey(keys.label(gen.get("hotkey", "ctrl+alt+space")))
         self.mouse_trigger.configure(gen.get("mouse_button", "middle"), gen.get("mouse_select", "off"),
                                      gen.get("mouse_close", "off"))
+        self._apply_agents()
         self._register_hotkey()
         self._update_notch()
         self._update_pill()
         if save:
             self._save_timer.start()
+
+    def _apply_agents(self) -> None:
+        """Start (or stop, or move) the local server AI agents talk to."""
+        a = agents.settings(self.cfg)
+        if a["enabled"]:
+            if a["token"] != agents.ensure_token(self.cfg):
+                self._save_timer.start()             # a new token: keep it, the tools are set up with it
+            a = agents.settings(self.cfg)
+            try:
+                port = int(a["port"])
+            except (TypeError, ValueError):
+                port = agents.DEFAULTS["port"]
+            self.agent_bridge.start(port, a["token"])
+        else:
+            self.agent_bridge.stop()
+            for q in self.agent_hub.snapshot()[1]:
+                self.agent_hub.answer(q.id, None)    # nobody's listening any more: the agents ask the usual way
+        self.notch.agent_flash = bool(a.get("flash", True))
+
+    def _on_agents_changed(self) -> None:
+        sessions, questions = self.agent_hub.snapshot()
+        self.notch.set_agents(sessions, questions)
+        asking = bool(questions)
+        if asking != self._asking:
+            self._asking = asking
+            if asking:
+                self.sounds.play("confirm")
+                self._say(f"{questions[0].agent} has a question")
+            self._update_notch()
 
     def reload_config(self) -> None:
         """config.json was edited outside the app."""
@@ -974,15 +1026,30 @@ class RotaryApp(QObject):
             self.dial.set_state(self.engine.snapshot())
 
     # ------------------------------------------------------------ notch & mouse
+    def _on_notch_approach(self) -> None:
+        """The pointer reached the notch: note what's in front now, while it's surely the user's app (a click
+        or the notch's menu could bring this app forward on macOS and Linux), and so a click opens straight
+        into that app's slides or video ring, as an open hand over it does."""
+        self._front = None
+        if self.engine.phase != Phase.IDLE:
+            return
+        self._mode_exec.submit(lambda: self.mode_data.emit(0, "front", self._detect_context()))
+
+    def _notch_open(self) -> None:
+        front, self._front = self._front, None
+        self._open_ctx = front[1] if front and time.monotonic() - front[0] < FRONT_SECONDS else None
+        self.open_manual()
+        self._open_ctx = None
+
     def _on_notch_click(self) -> None:
         if self.engine.phase == Phase.OPEN:
             self._close_manual("notch")
         else:
-            self.open_manual()
+            self._notch_open()
 
     def _on_notch_scroll(self, steps: int) -> None:
         if self.engine.phase != Phase.OPEN:
-            self.open_manual()
+            self._notch_open()
         elif self.keyboard_session:
             self._handle(self.engine.key_step(-steps if self.mode == "volume" else steps, time.monotonic()))
             self.dial.set_state(self.engine.snapshot())
@@ -1159,7 +1226,7 @@ class RotaryApp(QObject):
         mode = self.cfg.get("general", {}).get("notch", "auto")
         if mode == "off":
             return False
-        if mode == "on" or self._assist_showing() or self._ringing is not None:
+        if mode == "on" or self._assist_showing() or self._ringing is not None or self._asking:
             return True
         # auto: when there's no camera to use (switched off, or none found for a few seconds)
         return self._no_cam_since is not None and time.monotonic() - self._no_cam_since > 4.0
@@ -1169,8 +1236,8 @@ class RotaryApp(QObject):
         wanted = self._notch_wanted()
         # Alerts and screen-assist answers may show over a borderless full-screen game, never an exclusive one.
         alert = time.monotonic() < self._alert_until or (self._assist_showing() and self._fs_state != 3)
-        if self._ringing is not None and self._fs_state != 3 and self.cfg.get("island", {}).get("alerts_over_games",
-                                                                                                 True):
+        if ((self._ringing is not None or self._asking) and self._fs_state != 3
+                and self.cfg.get("island", {}).get("alerts_over_games", True)):
             alert = True
         show = wanted and (alert or not (self._fullscreen and gen.get("notch_hide_fullscreen", True)))
         # The live activities keep watching while a game hides the notch, so a saved clip can still pop up. With
@@ -1203,15 +1270,34 @@ class RotaryApp(QObject):
         self._update_notch()
         self._flash_msg(text, kind, accent, seconds)
 
-    def start_assist(self) -> None:
-        """Screen assist (hotkey, rotary item, notch menu): grab the screen, ask the AI, answer on the notch."""
+    def _assist_can_start(self) -> bool:
         if self._assist_busy:
-            return
+            return False
         missing = assist.ready(self.cfg)
         if missing:
             self._assist_message(missing, "error", AMBER, 6.0)
             self.show_window("assist")
+            return False
+        return True
+
+    def ask_with_note(self) -> None:
+        """The note box first (notch menu → Ask with a note, or every time when the Screen assist page says so):
+        a line of extra context for the AI, which can stay empty."""
+        if not self._assist_can_start():
             return
+        if self.engine.phase == Phase.OPEN:
+            self._close_manual("assist")
+        QTimer.singleShot(120, self.note_box.open)
+
+    def start_assist(self, note: str | None = None) -> None:
+        """Screen assist (hotkey, rotary item, notch menu): grab the screen, ask the AI, answer on the notch.
+        `note` is what the note box got ('' = nothing typed); None asks for one first if that's switched on."""
+        if note is None and assist.settings(self.cfg).get("ask_note"):
+            self.ask_with_note()
+            return
+        if not self._assist_can_start():
+            return
+        self._assist_note = note or ""
         self._assist_busy = True
         self.notch.clear_answer()
         if self.engine.phase == Phase.OPEN:
@@ -1222,22 +1308,27 @@ class RotaryApp(QObject):
         if self.dial.isVisible() and tries < 20:          # wait for the rotary to get out of the picture
             QTimer.singleShot(120, lambda: self._assist_capture(tries + 1))
             return
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         try:
-            shot = assist.capture()
+            shot = assist.capture(screen)
         except assist.AssistError as e:
             self._assist_busy = False
             self._assist_message(str(e), "error", RED, 5.0)
             return
         self._update_notch()
         self._flash_msg("Looking at your screen…", "pulse", BLUE, assist.TIMEOUT + 5)
+        if self._fs_state != 3:                           # never over an exclusive full-screen game
+            self.glow.start(assist.glow_colors(self.cfg), screen,
+                            bool(self.cfg.get("appearance", {}).get("reduce_motion", False)))
         cfg = self.cfg
+        note = assist.note_for(cfg, self._assist_note)
 
         def work():
             try:
                 app_name, title = modes.foreground()       # context clues for the AI: "steam", "Elden Ring on Steam"
                 if title.lower().startswith(("rotaryui", "gesture rotary")):
                     app_name = title = ""                   # our own settings window says nothing about the screen
-                self.assist_done.emit(assist.solve(shot, cfg, app=app_name, title=title), "")
+                self.assist_done.emit(assist.solve(shot, cfg, app=app_name, title=title, note=note), "")
             except assist.AssistError as e:
                 self.assist_done.emit(None, str(e))
             except Exception:
@@ -1247,6 +1338,7 @@ class RotaryApp(QObject):
 
     def _on_assist_done(self, ans, err: str) -> None:
         self._assist_busy = False
+        self.glow.stop()                                  # answered: the glow fades out
         self._flash = None
         if err:
             self._assist_message(err[:110], "error", RED, 6.0)
@@ -1418,12 +1510,15 @@ class RotaryApp(QObject):
 
     def _watch_context(self) -> bool:
         """Open as a slides / video ring if that's what's in front. True if it stays the item ring (for now).
-        On Windows this is instant; elsewhere asking can take a moment, so the ring switches when it knows."""
+        On Windows this is instant; elsewhere asking can take a moment, so the ring switches when it knows.
+        Opened from the notch, what was in front as the pointer reached it counts too (see _on_notch_approach)."""
+        ctx = self._detect_context() if WIN else modes.Context()
+        if not ctx.exe and self._open_ctx is not None:      # only our own windows to be seen: go by the notch's
+            ctx = self._open_ctx
+        if ctx.kind:
+            self._enter_mode(ctx)
+            return False
         if WIN:
-            ctx = self._detect_context()
-            if ctx.kind:
-                self._enter_mode(ctx)
-                return False
             return True
         token = self._mode_token
         self._mode_exec.submit(lambda: self.mode_data.emit(token, "context", self._detect_context()))
@@ -1554,6 +1649,9 @@ class RotaryApp(QObject):
         fut.add_done_callback(lambda f: self.mode_data.emit(token, "video", f.result()))
 
     def _on_mode_data(self, token: int, what: str, data) -> None:
+        if what == "front":
+            self._front = (time.monotonic(), data) if data.kind else None
+            return
         if token != self._mode_token or self.engine.phase != Phase.OPEN:
             return
         if what == "volume":
@@ -2089,6 +2187,7 @@ class RotaryApp(QObject):
             self._save_cfg()
 
     def _shutdown(self) -> None:
+        self.agent_bridge.stop()
         if self.tour is not None:            # quit mid-tour: it picks up again next time (tutorial_done stays false)
             import shiboken6
             self.tour.finished.disconnect()

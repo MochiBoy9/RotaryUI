@@ -251,6 +251,38 @@ account, in the macOS Keychain, or in the Linux keyring. The screenshot (the scr
 to the service you chose, and only when you ask. On a Mac, allow **Screen Recording** the first time; without it
 the AI only sees your wallpaper. On Linux it needs X11: Wayland doesn't let apps capture the screen this way.
 
+## AI agents on the notch
+
+The notch shows what your AI is doing, live, and lets you answer it without switching windows. It works with
+Claude Code (the app, the terminal and IDEs), Codex, any agent that speaks MCP (Cursor, Gemini CLI, LM Studio,
+Windsurf, Claude Desktop…) and any model you reach over an API: Ollama, LM Studio and other local LLMs, Groq,
+OpenAI, OpenRouter, Claude, Gemini, or your own server.
+
+- **At work**: a ring turning through purple and blue, and how long it's been at it.
+- **A new step**: when an agent moves on (from designing the UI to testing it, say), finishes or waits for you,
+  the notch says so for a moment: *Claude Code · Writing the tests*. Turn that off with *Slide in each new step*.
+- **Hover** for every agent you've used lately: what it's working on and what it's doing right now
+  (*Editing notch.py*, *Running the tests*).
+- **A question**: an amber **?** and the question pop up on the notch, even while you use the camera. Hover it to
+  answer: its options are buttons (Claude Code's *Allow* / *Always allow* / *Deny*, or the choices in a
+  multiple-choice question), and **Reply…** opens a box to type an answer. Not answered on the notch within 2
+  minutes (or 30 s / 5 / 10 min), the agent asks the usual way in its own window. Right-click the notch to answer
+  from its menu, too.
+
+Set it up on the **AI agents** page:
+
+| Tool | How |
+| --- | --- |
+| **Claude Code** | *Connect* adds hooks to `~/.claude/settings.json` (your other settings and hooks stay). New sessions then show each step, and their permission prompts and questions come to the notch. The hooks use `curl`, which comes with Windows 10 and later, macOS and Linux; when RotaryUI isn't running they do nothing. |
+| **Codex CLI** | *Connect* adds a `notify` program (the notch shows when Codex finishes a turn) and the notch's MCP tools to `~/.codex/config.toml`. |
+| **Any MCP agent** | Add an MCP server with the copied address (HTTP transport), e.g. `claude mcp add --transport http rotaryui <address>`. The agent gets two tools: `notch_status` (say what it's doing) and `ask_user` (ask you something and wait for the answer). |
+| **Models** (Ollama, Groq, local LLMs…) | Use the copied address as the base URL in the app that talks to the model, e.g. `…/proxy/ollama` (add `/v1` for OpenAI-style apps). Requests go on to the real service unchanged, API key and all, and the notch shows while the model is answering. More services: add `"proxies": {"name": "https://…"}` under `"agents"` in `config.json`. |
+| **Anything else** | `POST` JSON to `<address>/status`: `{"agent": "My script", "text": "Summarising the PDF", "state": "working"}` (`state`: `working`, `waiting`, `done`, `error`, or `end` to take it off). `POST` to `<address>/ask`: `{"agent": "My script", "question": "Send it?", "options": ["Yes", "No"]}` waits and answers `{"answered": true, "answer": "Yes", "typed": false}`. |
+
+The server listens on 127.0.0.1 only, so nothing else on the network can reach it, and every address starts with a
+secret, so web pages can't either. *Make a new secret* replaces it (the tools you connected are moved over). Cloud
+agents such as Claude Code on the web run on someone else's computer, so they can't reach the notch.
+
 ## Accessibility
 
 *Accessibility* offers quick setups:

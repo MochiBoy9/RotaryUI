@@ -8,6 +8,7 @@ from PySide6.QtCore import QBuffer, QPointF, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPixmap, QRadialGradient  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from rotary import agents  # noqa: E402
 from rotary.live import LiveState, NowPlaying  # noqa: E402
 from rotary.ui import liquid  # noqa: E402
 from rotary.ui.notch import AMBER, BLUE, GREEN, NotchWindow  # noqa: E402
@@ -120,6 +121,28 @@ frames.append(shot(n, bg))                                                     #
 n.hovered = True
 n._retarget()
 frames.append(shot(n, bg))
+hub = agents.Hub()                                                             # AI agents
+hub.update("c", "Claude Code", state="working", text="Editing notch.py", step="Designing the question card",
+           where="Gesture_Rotary")
+hub._sessions["c"].started -= 312
+hub.update("o", "Ollama", state="done", text="Answered", where="llama3.2")
+n, bg = notch(False)
+n.set_agents(*hub.snapshot())
+frames.append(shot(n, bg))                                                     # a new step slides in
+n._flash_until = 0
+n._retarget()
+frames.append(shot(n, bg))                                                     # at work
+n.hovered = True
+n._retarget()
+frames.append(shot(n, bg))                                                     # hover: every agent
+n.hovered = False
+q = agents.Question("q", "c", "Claude Code", "Run the tests?", "uv run pytest -q tests/test_agents.py",
+                    ["Allow", "Always allow", "Deny"], True, "Gesture_Rotary")
+n.set_agents(hub.snapshot()[0], [q])
+frames.append(shot(n, bg))                                                     # a question
+n.hovered = True
+n._retarget()
+frames.append(shot(n, bg))                                                     # hover to answer it
 W = max(f.width() for f in frames)
 H = sum(f.height() + 4 for f in frames)
 sheet = QImage(W, H, QImage.Format.Format_RGB32)

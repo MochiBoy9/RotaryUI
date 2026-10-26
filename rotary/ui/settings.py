@@ -13,17 +13,19 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, QFileInfo, QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QIcon, QImage, QKeySequence, QLinearGradient,
-                           QPainter, QPainterPath, QPixmap, QRadialGradient, QShortcut)
-from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFileIconProvider,
-                               QGridLayout, QHBoxLayout, QKeySequenceEdit, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
+from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QIcon, QImage, QKeySequence,
+                           QLinearGradient, QPainter, QPainterPath, QPixmap, QRadialGradient, QShortcut)
+from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QCheckBox, QColorDialog, QComboBox, QDialog,
+                               QFileDialog, QFileIconProvider, QGridLayout, QHBoxLayout, QKeySequenceEdit, QLabel,
+                               QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
                                QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from .. import (DATA_DIR, DEVICE, MAC, OS_NAME, ROOT, WIN, __version__, apps, integrations, keys, obs, system, update,
                winapi)
+from .. import agents
 from .. import assist as ai
 from .. import environment
 from ..actions import open_target
@@ -37,7 +39,7 @@ from .notch import DEFAULT_OPTIONS as DEFAULT_ISLAND
 from .notch import system_24h
 from .glass import BUNDLED_TEXT, ICONS, SYSTEM_TEXT, TEXT, app_icon, blur_backdrop, font, font_choices, white
 from .widgets import (Card, ColorPicker, GlyphPicker, KeyRecorder, PresetTile, Row, Segmented, SliderControl,
-                      Switch, icon_button, scroll_page, stylesheet)
+                      Swatch, Switch, icon_button, scroll_page, stylesheet)
 
 log = logging.getLogger(__name__)
 _uid = itertools.count(1)
@@ -2153,6 +2155,43 @@ class AssistPage(QWidget):
         c.add(Row("Screen assist on the rotary", "An item that answers what's on screen when you choose it",
                   self.add_btn))
         v.addWidget(c)
+
+        c = Card("Screen glow", "The edges of your screen glow while the AI works on an answer, like Siri, and fade "
+                                "once it's in.")
+        self.glow = Segmented([(k, name) for k, (name, _c) in ai.GLOWS.items()] + [("custom", "Custom"),
+                                                                                    ("off", "Off")], a["glow"])
+        self.glow.setFixedWidth(420)
+        self.glow.changed.connect(lambda k: self._set("glow", k))
+        c.add(Row("Look", "Siri is the purple-blue one", self.glow))
+        sw = QWidget()
+        sh = QHBoxLayout(sw)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.setSpacing(4)
+        self.glow_swatches = []
+        for i in range(3):
+            b = Swatch("#ffffff")
+            b.setCheckable(False)
+            b.clicked.connect(lambda _=False, i=i: self._pick_glow(i))
+            sh.addWidget(b)
+            self.glow_swatches.append(b)
+        self.glow_colors_row = c.add(Row("Custom colours", "Click a colour to change it; they flow around the screen "
+                                                           "in this order", sw))
+        v.addWidget(c)
+
+        c = Card("Your note", "Extra context for the AI besides what's on screen: which question you mean, what you "
+                              "want to know, your class or level. Fully optional.")
+        self.note = QLineEdit()
+        self.note.setMaxLength(ai.NOTE_MAX)
+        self.note.setFixedWidth(300)
+        self.note.setPlaceholderText("e.g. I'm in 10th grade chemistry")
+        self.note.editingFinished.connect(self._save_note)
+        c.add(Row("Always tell the AI", "Goes along with every question; leave it empty for none", self.note))
+        self.ask_note = Switch(bool(a["ask_note"]))
+        self.ask_note.toggled.connect(lambda on: self._set("ask_note", bool(on)))
+        c.add(Row("Ask for a note each time", "A box to type a note into before it looks at the screen; press Enter "
+                                              "with it empty to ask without one. Right-click the notch → Ask with a "
+                                              "note… works either way", self.ask_note))
+        v.addWidget(c)
         v.addStretch(1)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -2167,6 +2206,20 @@ class AssistPage(QWidget):
 
     def _prov(self):
         return ai.BY_ID.get(self.provider.currentData() or "", ai.PROVIDERS[0])
+
+    def _save_note(self) -> None:
+        if self.note.text().strip() != ai.settings(self.app.cfg)["note"]:
+            self._set("note", self.note.text().strip())
+
+    def _pick_glow(self, i: int) -> None:
+        colors = list(ai.settings(self.app.cfg)["glow_colors"]) + list(ai.GLOW_COLORS)
+        colors = colors[:3]
+        c = QColorDialog.getColor(QColor(colors[i]), self, "Glow colour")
+        if not c.isValid():
+            return
+        colors[i] = c.name().upper()
+        self.app.cfg.setdefault("assist", {})["glow"] = "custom"
+        self._set("glow_colors", colors)
 
     def _set(self, key: str, value) -> None:
         self.app.cfg.setdefault("assist", {})[key] = value
@@ -2307,6 +2360,203 @@ class AssistPage(QWidget):
         self.add_btn.setText("On the rotary" if self._has_item() else "Add to the rotary")
         self.hotkey.set_combo(a["hotkey"])
         self.seconds.set_value(str(int(a.get("seconds", 20))))
+        self.glow.set_value(str(a["glow"]))
+        custom = (list(a["glow_colors"]) + list(ai.GLOW_COLORS))[:3]
+        for b, col in zip(self.glow_swatches, custom):
+            b.color = col
+            b.setToolTip(col)
+            b.update()
+        self.glow_colors_row.setVisible(a["glow"] == "custom")
+        if not self.note.hasFocus():
+            self.note.setText(str(a["note"] or ""))
+        self.ask_note.set_silent(bool(a["ask_note"]))
+
+
+class AgentsPage(QWidget):
+    """AI agents on the notch: Claude Code, Codex, MCP clients and models report what they're doing, and ask
+    their questions there (agents.py)."""
+
+    def __init__(self, win: "MainWindow"):
+        super().__init__()
+        self.app = win.app
+        self.win = win
+        inner = QWidget()
+        v = QVBoxLayout(inner)
+        v.setContentsMargins(28, 24, 36, 32)
+        v.setSpacing(22)
+        v.addWidget(page_header("AI agents", "See what your AI is doing on the notch, live, and answer its questions "
+                                             "there. Claude Code, Codex, any agent that speaks MCP, and models from "
+                                             "Ollama, LM Studio, Groq, OpenAI, OpenRouter or anywhere else. Hover the "
+                                             "notch to see every agent and to answer one that's waiting on you."))
+        a = agents.settings(self.app.cfg)
+
+        c = Card("On the notch")
+        self.enabled = Switch(bool(a["enabled"]))
+        c.add(Row("Show AI agents on the notch", f"Runs a small server only this {DEVICE} can reach (127.0.0.1), "
+                                                  "behind a secret address", self.enabled))
+        self.flash = Switch(bool(a["flash"]))
+        c.add(Row("Slide in each new step", "When an agent moves on (from designing the UI to testing it, say), "
+                                            "finishes or waits for you, the notch says so for a moment", self.flash))
+        self.wait = Segmented([("30", "30 s"), ("120", "2 min"), ("300", "5 min"), ("600", "10 min")],
+                              str(int(a["ask_seconds"])))
+        self.wait.setFixedWidth(320)
+        c.add(Row("Wait for an answer on the notch", "Then the agent asks the usual way, in its own window",
+                  self.wait))
+        self.state = QLabel("")
+        self.state.setObjectName("value")
+        self.state.setWordWrap(True)
+        c.add(Row("Status", None, self.state))
+        v.addWidget(c)
+
+        c = Card("Connect your AI tools", "Claude Code on the web and other cloud agents run on someone else's "
+                                          "computer, so they can't reach the notch; the Claude Code app, terminal "
+                                          "and IDE can.")
+        self.claude_btn = QPushButton()
+        self.claude_btn.clicked.connect(self._claude)
+        self.claude_row = c.add(Row("Claude Code", "", self.claude_btn))
+        self.codex_btn = QPushButton()
+        self.codex_btn.clicked.connect(self._codex)
+        self.codex_row = c.add(Row("Codex CLI", "", self.codex_btn))
+        mcp = QPushButton("Copy address")
+        mcp.clicked.connect(lambda: self._copy("/mcp", "MCP address"))
+        self.mcp_row = c.add(Row("Any agent that speaks MCP",
+                                 "Cursor, Gemini CLI, LM Studio, Windsurf, Claude Desktop…: add an MCP server with this "
+                                 "address (HTTP). It gets two tools: notch_status and ask_user.", mcp))
+        pw = QWidget()
+        ph = QHBoxLayout(pw)
+        ph.setContentsMargins(0, 0, 0, 0)
+        self.proxy = QComboBox()
+        for key, (name, _url) in agents.UPSTREAMS.items():
+            self.proxy.addItem(name, key)
+        for key in (a.get("proxies") or {}):
+            self.proxy.addItem(key, key)
+        copy_proxy = QPushButton("Copy address")
+        copy_proxy.clicked.connect(lambda: self._copy(f"/proxy/{self.proxy.currentData()}", "Base URL"))
+        ph.addWidget(self.proxy)
+        ph.addWidget(copy_proxy)
+        self.proxy_row = c.add(Row("Models (Ollama, Groq, local LLMs…)",
+                                   "Use this as the base URL in the app that talks to the model (add /v1 for "
+                                   "OpenAI-style apps). Requests go on to the real service unchanged, your API key "
+                                   "and all, and the notch shows while the model answers.", pw))
+        api = QPushButton("Copy address")
+        api.clicked.connect(lambda: self._copy("", "Address"))
+        c.add(Row("Anything else", "Scripts and your own tools: POST JSON to /status to say what's happening, or "
+                                   "to /ask to ask a question and get the answer back (README: AI agents on the "
+                                   "notch)", api))
+        new = QPushButton("Make a new secret")
+        new.clicked.connect(self._new_token)
+        c.add(Row("Secret address", "If someone else got hold of it. Connected tools are moved over; copy the "
+                                    "others again", new))
+        self.note = QLabel("")
+        self.note.setObjectName("muted")
+        self.note.setWordWrap(True)
+        self.note.setContentsMargins(14, 4, 14, 8)
+        self.note.hide()
+        c.add(self.note)
+        v.addWidget(c)
+        v.addStretch(1)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(scroll_page(inner))
+
+        self.enabled.toggled.connect(lambda on: self._set("enabled", on))
+        self.flash.toggled.connect(lambda on: self._set("flash", on))
+        self.wait.changed.connect(lambda k: self._set("ask_seconds", int(k)))
+        self.refresh()
+
+    def _note(self, text: str) -> None:
+        self.note.setText(text)
+        self.note.setVisible(bool(text))
+
+    def _url(self) -> str:
+        agents.ensure_token(self.app.cfg)
+        return agents.base_url(self.app.cfg)
+
+    def _set(self, key: str, value) -> None:
+        self.app.cfg.setdefault("agents", {})[key] = value
+        self.app.apply_config()
+        if key == "ask_seconds" and agents.claude_connected(self._url()):
+            self._try(lambda: agents.connect_claude(self._url(), float(value)))   # its hook waits that long too
+        self.refresh()
+
+    def _try(self, fn) -> str:
+        try:
+            return fn() or ""
+        except (OSError, ValueError) as e:
+            self._note(f"Couldn't change that file: {e}")
+            return "error"
+
+    def _claude(self) -> None:
+        url = self._url()
+        if agents.claude_connected(url):
+            if not self._try(agents.disconnect_claude):
+                self._note("Claude Code is disconnected. Sessions already running keep their hooks until "
+                                  "they restart.")
+        elif not self._try(lambda: agents.connect_claude(url, float(agents.settings(self.app.cfg)["ask_seconds"]))):
+            self._note("Claude Code is connected. Start a new Claude Code session and "
+                              "its steps show on the notch.")
+        self.refresh(keep_note=True)
+
+    def _codex(self) -> None:
+        url = self._url()
+        if agents.codex_connected(url):
+            if not self._try(agents.disconnect_codex):
+                self._note("Codex is disconnected.")
+        else:
+            note = self._try(lambda: agents.connect_codex(url))
+            if note != "error":
+                self._note(note or "Codex is connected. Start a new session and the notch shows when it's "
+                                          "done, and Codex can use the notch's tools.")
+        self.refresh(keep_note=True)
+
+    def _copy(self, path: str, what: str) -> None:
+        QGuiApplication.clipboard().setText(self._url() + path)
+        self._note(f"{what} copied: {self._url() + path}")
+
+    def _new_token(self) -> None:
+        old = self._url()
+        claude, codex = agents.claude_connected(old), agents.codex_connected(old)
+        self.app.cfg.setdefault("agents", {})["token"] = ""
+        agents.ensure_token(self.app.cfg)
+        self.app.apply_config()
+        url = self._url()
+        if claude:
+            self._try(lambda: agents.connect_claude(url, float(agents.settings(self.app.cfg)["ask_seconds"])))
+        if codex:
+            self._try(lambda: agents.connect_codex(url))
+        self._note("New secret address made. Copy the addresses again for anything you set up by hand.")
+        self.refresh(keep_note=True)
+
+    def refresh(self, keep_note: bool = False) -> None:
+        a = agents.settings(self.app.cfg)
+        self.enabled.set_silent(bool(a["enabled"]))
+        self.flash.set_silent(bool(a["flash"]))
+        self.wait.set_value(str(int(a["ask_seconds"])))
+        bridge = self.app.agent_bridge
+        if not a["enabled"]:
+            self.state.setText("Off")
+        elif bridge.running:
+            n = len([s for s in self.app.agent_hub.snapshot()[0]])
+            self.state.setText(f"Listening on 127.0.0.1:{bridge.port}" + (f" · {n} agent{'s' if n != 1 else ''} "
+                                                                           "heard from lately" if n else ""))
+        else:
+            self.state.setText(bridge.error or "Not running")
+        url = self._url()
+        on = agents.claude_connected(url)
+        self.claude_btn.setText("Disconnect" if on else "Connect")
+        self.claude_row.subtitle.setText(
+            ("Connected. " if on else "") + "Each step shows on the notch, and its permission prompts and questions "
+            "can be answered there. Adds hooks to " + str(agents.claude_settings_path()).replace(str(Path.home()), "~")
+            + " (they need curl, which comes with " + OS_NAME + ").")
+        on = agents.codex_connected(url)
+        self.codex_btn.setText("Disconnect" if on else "Connect")
+        self.codex_row.subtitle.setText(
+            ("Connected. " if on else "") + "The notch shows when Codex finishes a turn, and Codex gets the notch's "
+            "MCP tools. Adds them to " + str(agents.codex_config_path()).replace(str(Path.home()), "~") + ".")
+        for w in (self.claude_btn, self.codex_btn):
+            w.setEnabled(bool(a["enabled"]))
+        if not keep_note:
+            self._note("")
 
 
 class CameraPage(QWidget):
@@ -2788,6 +3038,7 @@ SECTION_BLURBS = {
     "gestures": "Hand gestures and how they feel",
     "notch": "Mouse & keyboard, and the Dynamic Island",
     "assist": "Ask AI about what's on your screen",
+    "agents": "Claude Code, Codex and other AI on the notch",
     "accessibility": "Text size, contrast, motion and sound",
     "camera": "Which camera, and what it sees",
     "general": "Startup, appearance, fonts and updates",
@@ -3001,6 +3252,7 @@ class MainWindow(QWidget):
              ("rotary", "Rotary", "E8F1", "#0A84FF", "Rotary"), ("apps", "Apps", "F0E2", "#FF375F", "Rotary"),
              ("gestures", "Controls", "E815", "#FF9F0A", "Rotary"),
              ("notch", "Notch", "E962", "#5E5CE6", "Features"), ("assist", "Screen assist", "E897", "#BF5AF2", "Features"),
+             ("agents", "AI agents", "E8BD", "#5E5CE6", "Features"),
              ("accessibility", "Accessibility", "E776", "#30D158", "System"),
              ("camera", "Camera", "E722", "#64D2FF", "System"), ("general", "General", "E713", "#8E8E93", "System")]
 
@@ -3271,6 +3523,7 @@ class MainWindow(QWidget):
         self.gestures = GesturesPage(self)
         self.notch = NotchPage(self)
         self.assist = AssistPage(self)
+        self.agents = AgentsPage(self)
         self.accessibility = AccessibilityPage(self)
         self.camera = CameraPage(self)
         self.general = GeneralPage(self)
@@ -3322,6 +3575,8 @@ class MainWindow(QWidget):
             self.notch.refresh()
         elif page is self.assist:
             self.assist.refresh()
+        elif page is self.agents:
+            self.agents.refresh()
         elif page is self.camera:
             self.camera.refresh()
         elif page is self.home:
