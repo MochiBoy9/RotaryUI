@@ -30,6 +30,7 @@ from .text import best_name, fold, name_key, same_player, similar
 STATS = ("kills", "deaths", "assists", "revives", "revived", "wipes")
 NEED = {MENU: 3, IN_MATCH: 3, SCORES: 1}       # frames before a thing counts (2 for everything else)
 FORGET = 2.5         # s unseen: it's gone (seen again later, it's new)
+FORGET_DEAD = 4.0    # s for the death bar: up for seconds, but its small words aren't read every frame
 MERGE = 5.0          # s: two sightings of one elimination / assist / revive
 DEATH_MERGE = 10.0   # s: the feed line and the death screen of one death
 ALIVE_AFTER = 6.0    # s without the death screen: back in the game
@@ -40,6 +41,7 @@ IDLE_END = 300.0     # s with no sign of a match and it's over
 NAME_PAIR = 4.0      # s: a tally elimination and a feed line about the same player
 SCORE_KEEP = 6.0     # s a team's cash stays known when its row wasn't read
 SELF_READS = 6       # frames your name has to be read the same under your health before it's taken
+LATE_RESULT = 60.0   # s after a guessed end that a placement or result shown after it still puts it right
 RESULTS = ("won", "lost", "draw", "place", "left", "ended")
 
 
@@ -151,6 +153,7 @@ class Tracker:
         self._tally_victims: list = []           # (t, victim) from the tally, to learn your name from the feed
         self._feed_lines: list = []              # (t, killer, victim)
         self._death_killers: list = []           # (t, killer)
+        self._dead_names: list = []              # (t, killer) as read on the death bar and card, this death
         self.name_votes: Counter = Counter()
         self.self_reads: Counter = Counter()     # your name as read under your health, frame by frame
         self._spellings: Counter = Counter()     # (its key, as written)
@@ -219,14 +222,28 @@ class Tracker:
         out: list[Event] = []
         frame = {}
         for o in observations:
+            if o.kind == DEAD and "weak" not in o.values:
+                # One death however it's read (the bar's colour, its words, the card, a killer's name spelt
+                # three ways): every sighting counts towards it, and the name read most often is the killer.
+                if o.other:
+                    self._dead_names.append((now, o.other))
+                if (DEAD, "") not in frame or o.other:
+                    frame[(DEAD, "")] = o
+                continue
             frame.setdefault(o.key, o)               # once per frame
         for key, o in frame.items():
+            if o.kind == IN_MATCH and self.match is not None:
+                self._last_sign = now                # the HUD's still up (counted or not, the match goes on)
             if o.kind == DEAD:
                 if "weak" in o.values:
                     if self.dead:
                         self._dead_seen = now                # FREE CAMERA…: still out, not newly out
                     continue
                 self._dead_seen = now
+                if self.match is not None:
+                    self._last_sign = now
+                if self.dead:
+                    out += self._killer_read(now)
             if o.kind == SELF_NAME:
                 out += self._self_name(o)
                 continue
@@ -251,8 +268,10 @@ class Tracker:
     def tick(self, now: float) -> list[Event]:
         """Time passing: things that went away, coming back to life, matches that petered out."""
         out = []
-        for key in [k for k, s in self._seen.items() if now - s.last > FORGET]:
+        for key in [k for k, s in self._seen.items() if now - s.last > (FORGET_DEAD if k[0] == DEAD else FORGET)]:
             del self._seen[key]
+        if not self.dead and (DEAD, "") not in self._seen:
+            self._dead_names.clear()
         for stat in self._recent:
             self._recent[stat] = [r for r in self._recent[stat] if now - r[0] <= max(MERGE, DEATH_MERGE)]
         if self.dead and now - self._dead_seen > ALIVE_AFTER:
@@ -318,15 +337,16 @@ class Tracker:
         if k == DEAD:
             if not s.fired:
                 s.fired = True
-                if o.other:
-                    self._death_killers.append((now, o.other))
+                killer = self._killer_guess()
+                if killer:
+                    self._death_killers.append((now, killer))
                     out += self._learn(now)
                 if not self.dead:
-                    self.dead, self._dead_since, self.killer = True, now, o.other
-                    out += self._count("deaths", now, o.other, "screen", DEATH_MERGE)
-                    out.append(Event("dead", text=o.other))
-                elif o.other and not self.killer:
-                    self.killer = o.other
+                    self.dead, self._dead_since, self.killer = True, now, killer
+                    out += self._count("deaths", now, killer, "screen", DEATH_MERGE)
+                    out.append(Event("dead", text=killer))
+                elif killer and not self.killer:
+                    self.killer = killer
             return out
         if k == FEED_DEATH:
             if not s.fired:
@@ -409,11 +429,29 @@ class Tracker:
         if m is not None:
             m.events.append((round(m.seconds(now), 1), stat, other, source))
 
+    def _killer_guess(self) -> str:
+        """Who eliminated you, as read most often on the bar and the card this death."""
+        votes = Counter(name_key(n) for _t, n in self._dead_names if name_key(n))
+        if not votes:
+            return ""
+        best = votes.most_common(1)[0][0]
+        return Counter(n for _t, n in self._dead_names if name_key(n) == best).most_common(1)[0][0]
+
+    def _killer_read(self, now: float) -> list[Event]:
+        """While you're out the killer's name may only now be read (or read better): the notch says it."""
+        killer = self._killer_guess()
+        if not killer or killer == self.killer:
+            return []
+        if not self.killer:
+            self._death_killers.append((now, killer))
+        self.killer = killer
+        return [Event("killer", text=killer)] + self._learn(now)
+
     def _result(self, now: float, o: Observation) -> list[Event]:
         m = self.match
-        if m is None:
-            return []
         unsure = "unsure" in o.values
+        if m is None:
+            return self._late_result(now, o, unsure)
         if o.other == "qualified":
             if m.pending == "qualified":
                 return []                                    # the same sequence, another team's turn
@@ -433,6 +471,18 @@ class Tracker:
                 return self.end_match(now, "lost", estimated=not st.get("sure"))
             return self.end_match(now, "ended", estimated=True)
         return self.end_match(now, o.other, estimated=unsure)
+
+    def _late_result(self, now: float, o: Observation, unsure: bool) -> list[Event]:
+        """A placement (or a plain win or loss) up after the match's end was only guessed: it puts it right."""
+        m = self.last
+        if (m is None or m.manual or not m.estimated or unsure or now - self._ended_at > LATE_RESULT
+                or o.other not in ("place", "won", "lost")):
+            return []
+        place = o.count if o.other == "place" else 0
+        result = "won" if o.other == "place" and place == 1 else o.other
+        m.result, m.place, m.estimated = result, place, False
+        m.events.append((round(m.seconds(m.t_end), 1), "end", result + (f" {place}" if place else ""), "screen"))
+        return [Event("result", text=result, value=place)]
 
     # ------------------------------------------------------------------ the scoreboard
     def _scores(self, now: float, o: Observation) -> list[Event]:

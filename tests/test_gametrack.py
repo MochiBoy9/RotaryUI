@@ -118,6 +118,42 @@ def test_death_bar_and_card():
     assert kinds(card)[0] == (DEAD, "")
 
 
+def test_the_death_bar_however_its_read():
+    obs = read(bottom=[words(1040, ["RESPAWN", "AVAILABLE", "IN", "4"], x=880, h=34)])
+    assert kinds(obs)[0] == (DEAD, "") and not obs[0].values
+    obs = read(bottom=[words(1040, ["ELIMINATED", "87:", "KIRRBY"], x=710, h=34)])      # BY misread, : kept
+    assert kinds(obs)[0] == (DEAD, "KIRRBY")
+    assert kinds(read(bottom=[words(1040, ["WNHAVAILABIEW3"], x=880, h=34)]))[0] == (DEAD, "")   # weak
+    assert "weak" in read(bottom=[words(1040, ["WNHAVAILABIEW3"], x=880, h=34)])[0].values
+
+
+def _bar_frame(h, bar=True, top=True, across=True):
+    w = h * 16 // 9
+    f = np.full((h, w, 3), 60, np.uint8)
+    if bar:
+        y0 = int(0.925 * h) if top else 0
+        f[y0:, : w if across else w // 2] = (62, 32, 214)         # BGR: the bar's red
+    return f
+
+
+@pytest.mark.parametrize("h", [360, 720, 1080, 1440, 2160])
+def test_the_red_bar_is_found_by_its_colour_at_any_size(h):
+    assert finals.death_bar(_bar_frame(h))
+    obs = read(frame=_bar_frame(h))
+    assert (DEAD, "") in kinds(obs) and (IN_MATCH, "") in kinds(obs)
+    assert not finals.death_bar(_bar_frame(h, bar=False))
+    assert not finals.death_bar(_bar_frame(h, top=False))       # a red screen (a loading screen, a flash)
+    assert not finals.death_bar(_bar_frame(h, across=False))    # red glare in a corner
+
+
+def test_duel_cash_either_side_of_the_clock():
+    obs = read(timer=[words(40, ["$300/1,000"], x=700) + words(40, ["4:26"], x=935)
+                      + words(40, ["$400", "/1,000"], x=1060)])
+    sc = next(o for o in obs if o.kind == SCORES)
+    assert sc.values == (("#1", 300), ("#2", 400)) and sc.other == "#1"
+    assert not [o for o in read(timer=[words(40, ["$300/1,000"], x=700)]) if o.kind == SCORES]   # one side only
+
+
 def test_banners_need_big_letters():
     big = H * 0.06
     assert kinds(read(banner=[words(400, ["VICTORY"], x=800, h=big)])) == [(RESULT, "won")]
@@ -173,7 +209,7 @@ def test_clock_menus_and_your_name():
     menu = read(timer=[words(30, ["PLAY", "|", "LOADOUT", "|", "CAREER", "|", "STORE"], x=700)])
     assert (MENU, "") in kinds(menu)
     me = read(self=[words(940, ["250/250"], x=70, h=30), words(1003, ["LevelCap"], x=67, h=16)])
-    assert kinds(me) == [(SELF_NAME, "LevelCap")]
+    assert kinds(me) == [(IN_MATCH, "health"), (SELF_NAME, "LevelCap")]     # your health: in a match
     assert not read(self=[words(815, ["L", "ReadyTrooper"], x=110)])                # a teammate's row
 
 
@@ -257,6 +293,44 @@ def test_while_dead_only_the_feed_counts():
     assert not tr.dead
     frames(tr, [ob(DEAD, values=("weak",))], 40, 4)
     assert not tr.dead and tr.match.stats["deaths"] == 1
+
+
+def test_one_death_from_sightings_spread_out_and_spelt_differently():
+    """Small, blurry words on the bar are read now and then, a little differently each time: still one death,
+    and the killer is the name read most often."""
+    tr = Tracker(finals.PROFILE)
+    tr.start_match(0, manual=False)
+    for t, name in ((10, "KIRREY"), (11.5, "KIRRBY"), (14.5, ""), (16, "KIRRBY")):
+        tr.feed(t, [ob(DEAD, name)])
+    assert tr.dead and tr.match.stats["deaths"] == 1 and tr.killer == "KIRRBY"
+    frames(tr, [], 17, 8)
+    assert not tr.dead
+    frames(tr, [ob(DEAD, values=("bar",))], 30, 2)              # the red bar alone, the next death
+    assert tr.match.stats["deaths"] == 2 and tr.killer == ""
+
+
+def test_the_hud_keeps_a_match_going():
+    tr = Tracker(finals.PROFILE)
+    tr.start_match(0, manual=False)
+    for t in range(0, 900, 20):                                  # your health, read now and then
+        tr.feed(t, [ob(IN_MATCH, "health")])
+    assert tr.match is not None
+    frames(tr, [], 900, 1)
+    tr.tick(1300)
+    assert tr.match is None and tr.last.result == "left"
+
+
+def test_a_placement_after_a_guessed_end_puts_it_right():
+    tr = Tracker(finals.PROFILE)
+    tr.start_match(0, manual=False)
+    out = frames(tr, [ob(RESULT, "lost", values=("unsure",))], 100, 2)
+    assert tr.match is None and tr.last.result == "lost" and tr.last.estimated
+    frames(tr, [ob(RESULT, "lost", values=("unsure",))], 102, 3)   # the banner lingers: nothing new
+    out = frames(tr, [ob(RESULT, "place", 3)], 115, 2)
+    assert ("result", "place") in [(e.kind, e.text) for e in out]
+    assert (tr.last.result, tr.last.place, tr.last.estimated) == ("place", 3, False)
+    frames(tr, [ob(RESULT, "won")], 130, 2)                          # sure now: left alone
+    assert tr.last.result == "place"
 
 
 def test_your_team_from_the_board():
@@ -448,6 +522,7 @@ NEEDS_TESSERACT = pytest.mark.skipif(not shutil.which("tesseract"), reason="need
 def _hud(draw):
     """A 1080p frame: a busy, bright-ish picture with whatever `draw(painter, font)` puts over it."""
     img = QImage(W, H, QImage.Format.Format_RGB32)
+    img.fill(QColor(0, 0, 0))                 # a new QImage holds whatever was in that memory before
     p = QPainter(img)
     rng = np.random.default_rng(3)
     for i in range(40):
@@ -511,7 +586,9 @@ def test_a_drawn_hud_is_read():
 
 
 @NEEDS_TESSERACT
-def test_a_drawn_death_screen_is_read():
+@pytest.mark.parametrize("h", [720, 1080, 1440])
+def test_a_drawn_death_screen_is_read(h):
+    import cv2
     from rotary.gametrack.watcher import read_frame
 
     def draw(p, f):
@@ -521,8 +598,10 @@ def test_a_drawn_death_screen_is_read():
         p.setFont(f)
         p.drawText(QPointF(710, 1055), "ELIMINATED BY:  SWEETSPICYSALTY")
 
-    obs, _texts = read_frame(_hud(draw), finals.PROFILE, ocr.Tesseract(), {"names": ["MochiBoy"]})
+    frame = cv2.resize(_hud(draw), (h * 16 // 9, h), interpolation=cv2.INTER_AREA)     # a smaller or bigger screen
+    obs, _texts = read_frame(frame, finals.PROFILE, ocr.Tesseract(), {"names": ["MochiBoy"]})
     assert (DEAD, "SWEETSPICYSALTY") in kinds(obs)
+    assert any(o.kind == DEAD and "bar" in o.values for o in obs)     # and the bar by its colour
 
 
 def test_zones_can_be_moved_in_the_config():

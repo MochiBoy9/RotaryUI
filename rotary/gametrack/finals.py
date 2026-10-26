@@ -10,7 +10,8 @@ levelled):
   * Top left, the teams' cash, best first: "1 [badge] $37,500 + $18,000" (the "+" is cash on its way to a
     cashout). Your team's rank sits in a filled blue box. In a knockout round a KNOCKOUT ZONE line separates
     the teams going through from the rest.
-  * Top middle, the round's clock ("12:39", "+0:17" in overtime) under the compass.
+  * Top middle, the round's clock ("12:39", "+0:17" in overtime) under the compass. In the two-team cash
+    modes the teams' cash is either side of it, "$300/1,000" (to the target): yours on the left.
   * Top right, the elimination feed: "Killer [weapon] > Victim", a club tag in a box before some names
     ("[KSDAD] TheRealDevon_1"). Your teammates are blue, the others red or orange.
   * Under the crosshair, when you eliminate someone, the headline "ELIMINATED Tempest" (ASSISTED for an
@@ -18,9 +19,11 @@ levelled):
     left alone: REVIVE over a teammate's statue, CASHOUT $10000 over a station, the stadium screens'
     "ELIMINATION STREAK 4", CASHOUT STOLEN +1000.
   * When you're out: a red bar along the bottom, "ELIMINATED BY: [PR75] SWEETSPICYSALTY", then "TEAM
-    RESPAWNING IN 12", FREE CAMERA, Change loadout; often a card on the right, ELIMINATED BY and the name over
-    the damage dealt each way ("144 by BusinessLock", "85 to ShrewdFace"). Eliminations read while it's up
-    aren't yours unless the feed says so (the tracker sees to that).
+    RESPAWNING IN 12" (or "RESPAWN AVAILABLE IN 4"), FREE CAMERA, Change loadout. The bar itself is found by its
+    colour, so a death counts even when the words on it are too small or blurred to read. Often a card on the
+    right, ELIMINATED BY and the name over the damage dealt each way ("144 by BusinessLock", "85 to
+    ShrewdFace"). Eliminations read while it's up aren't yours unless the feed says so (the tracker sees to
+    that).
   * Bottom left, your health ("250/250") with your name under it, and your teammates above.
   * Big in the middle at the end of a round: QUALIFIED (through to the next round), a placement, or a win or
     loss banner (VICTORY, DEFEAT, a lone ELIMINATED in the simpler modes, WINNER over the winning team).
@@ -44,7 +47,7 @@ from .text import (Row, Word, best_name, board_cash, cash_values, clean, count_m
 ZONES = {
     "feed": Zone(0.64, 0.0, 1.0, 0.16, angle=-5, scale=2, slant=0.15),     # killfeed, top right, leaning up
     "board": Zone(0.0, 0.03, 0.2, 0.32, angle=5, scale=2, every=2, slant=0.15),   # teams' cash, leaning down
-    "timer": Zone(0.36, 0.02, 0.64, 0.1, scale=1.5),                       # the clock (and the menus' tabs)
+    "timer": Zone(0.33, 0.02, 0.645, 0.1, scale=1.5),                      # the clock (and the menus' tabs)
     "center": Zone(0.25, 0.2, 0.75, 0.88, slant=0.15),                     # headline and tally
     "banner": Zone(0.15, 0.25, 0.85, 0.75, scale=0.33, block=True, slant=0.2),    # QUALIFIED, results, rounds
     "bottom": Zone(0.0, 0.9, 1.0, 1.0, scale=2, slant=0.15),               # the death bar
@@ -72,8 +75,9 @@ MODES = {
 WORDS = {
     # only up while you're out: the death bar, the card, spectating
     "dead": ["ELIMINATED BY", "KILLED BY", "YOU WERE ELIMINATED", "YOU HAVE BEEN ELIMINATED", "RESPAWN IN",
-             "RESPAWNING IN", "TEAM RESPAWNING IN", "RESPAWNING", "USE RESPAWN COIN", "WAITING FOR REVIVE",
-             "BEING REVIVED", "SPECTATING", "YOUR TEAM WAS WIPED", "YOUR TEAM WIPED"],
+             "RESPAWN AVAILABLE IN", "RESPAWN AVAILABLE", "RESPAWNING IN", "TEAM RESPAWNING IN", "RESPAWNING",
+             "USE RESPAWN COIN", "WAITING FOR REVIVE", "BEING REVIVED", "SPECTATING",
+             "YOUR TEAM WAS WIPED", "YOUR TEAM WIPED"],
     # on the death bar too, but maybe not only there: they keep you dead, they don't make you dead
     "dead_weak": ["FREE CAMERA", "CHANGE LOADOUT", "RESPAWN COIN"],
     "revived_by": ["REVIVED BY"],
@@ -106,7 +110,8 @@ TIMER = re.compile(r"^\+?\d{1,2}[:.]\d{2}$")
 POINTS = re.compile(r"^\+?\d{2,4}$")
 DISTANCE = re.compile(r"^\d{1,4}M$")                 # "15m" over a player or an objective
 ARROW = re.compile(r"[>»›→]")
-HEALTH = re.compile(r"^(\d{2,3})[/|IL1]?(\d{3})$")   # "250/250" (the "/" can come out as a 1 or an l)
+HEALTH = re.compile(r"^(\d{2,3})[/|IL1;:!,.)\]]?(\d{3})$")   # "250/250" (the "/" can come out as 1, l, ";"…)
+DUEL = re.compile(r"^([$S8]?[\d,.]+)?/([\d,.]{3,})$")           # "$300/1,000": a team's cash, to the target
 DAMAGE = re.compile(r"^\d{1,4}$")
 
 
@@ -314,14 +319,48 @@ def read_bottom(rows: list[Row], ctx: dict) -> list[Observation]:
         if hit is not None:
             out.append(Observation(REVIVED_BY, best_name(_rest(row, (0, hit[1][1]))), text=row.text))
             continue
-        hit = any_phrase(toks, words(ctx, "dead"))
+        hit = any_phrase(toks, words(ctx, "dead")) or _eliminated_colon(row)
         if hit is not None:
             out.append(_dead(row, hit))
-        elif any(run_in(toks, ph) for ph in ("TEAM RESPAWNING", "RESPAWNING IN", "ELIMINATED BY")):
+        elif any(run_in(toks, ph) for ph in ("TEAM RESPAWNING", "RESPAWNING IN", "ELIMINATED BY",
+                                             "RESPAWN AVAILABLE")):
             out.append(Observation(DEAD, text=row.text))                 # the bar, its spaces lost
-        elif any_phrase(toks, words(ctx, "dead_weak")) is not None:
+        elif any_phrase(toks, words(ctx, "dead_weak")) is not None or run_in(toks, "AVAILABLE"):
             out.append(Observation(DEAD, values=("weak",), text=row.text))
     return out
+
+
+def _eliminated_colon(row: Row):
+    """ "ELIMINATED 87: NAME": the bar's BY misread, its colon still there. ("ELIMINATED BY", (start, end))."""
+    toks = row.tokens
+    for i in range(min(2, len(toks) - 1)):
+        nxt = row.words[i + 1].text.strip()
+        if similar(toks[i], "ELIMINATED") and nxt.endswith(":") and len(clean(nxt)) <= 3:
+            return "ELIMINATED BY", (i, i + 2)
+    return None
+
+
+def death_bar(frame) -> bool:
+    """The red bar along the bottom that's up while you're out, found by its colour: it says you're out at any
+    resolution, however small or blurred its words. It must reach right across the screen and stop at its top
+    edge, which a red flash, a hit's glare or a red loading screen doesn't."""
+    if frame is None or frame.ndim != 3:
+        return False
+    H, W = frame.shape[:2]
+    step = max(1, W // 480)
+
+    def red(y0: float, y1: float):
+        reg = frame[int(y0 * H):int(y1 * H):step, ::step, :3].astype(int)
+        b, g, r = reg[..., 0], reg[..., 1], reg[..., 2]
+        return (r > 120) & (r - g > 60) & (r - b > 40)
+
+    bar = red(0.935, 0.99)
+    if bar.size == 0 or bar.mean() < 0.8:
+        return False
+    cols = bar.mean(0)
+    if min(cols[i:i + max(1, len(cols) // 8)].mean() for i in range(0, len(cols), max(1, len(cols) // 8))) < 0.6:
+        return False                                   # not right across (the HUD's corner in a red glare)
+    return red(0.8, 0.88).mean() < 0.4                  # and it has a top
 
 
 def _damage_row(row: Row) -> tuple[str, str] | None:
@@ -495,18 +534,20 @@ def read_board(rows: list[Row], size: tuple[int, int], ctx: dict) -> list[Observ
 # ------------------------------------------------------------------------------------------------ the rest
 
 def read_self(rows: list[Row], ctx: dict) -> list[Observation]:
-    """Your name, under your health ("250/250")."""
+    """Your health ("250/250"), which says you're in a match, and your name under it."""
     rows = _clean_rows(rows)
     for i, row in enumerate(rows):
         m = HEALTH.match("".join(w.text for w in row.words).replace(" ", "").upper())
-        if m is None or int(m.group(2)) < 100 or i + 1 >= len(rows):
+        if m is None or not 100 <= int(m.group(2)) <= 400:
             continue
+        if i + 1 >= len(rows):
+            return [Observation(IN_MATCH, "health", text=row.text)]
+        out = [Observation(IN_MATCH, "health", text=row.text)]       # only up in a match
         nxt = rows[i + 1]
-        if nxt.y - (row.y + row.h) > 3 * row.h:
-            continue
         name = best_name(nxt.text)
-        if len(clean(name)) >= 3 and not clean(name).isdigit():
-            return [Observation(SELF_NAME, name, text=nxt.text)]
+        if nxt.y - (row.y + row.h) <= 3 * row.h and len(clean(name)) >= 3 and not clean(name).isdigit():
+            out.append(Observation(SELF_NAME, name, text=nxt.text))
+        return out
     return []
 
 
@@ -518,6 +559,38 @@ def read_top(rows: list[Row], size: tuple[int, int], ctx: dict) -> list[Observat
             if TIMER.match(w.text.strip().replace("O", "0")) and 0.38 * W <= w.x + w.w / 2 <= 0.62 * W:
                 return [Observation(IN_MATCH, text="clock " + w.text)]
     return []
+
+
+def _duel_cash(words: list[Word], i: int) -> int | None:
+    """A team's cash to the target at words[i]: "$300/1,000", or "$300" then "/1,000" (OCR splits it)."""
+    t = words[i].text.strip(" |()[]")
+    if "/" not in t and i + 1 < len(words) and words[i + 1].text.strip().startswith("/"):
+        t += words[i + 1].text.strip()
+    m = DUEL.match(t.upper().replace("O", "0"))
+    if m is None or not m.group(1):
+        return None
+    v, target = board_cash(m.group(1)), int(re.sub(r"\D", "", m.group(2)) or 0)
+    if v is None and m.group(1)[0].isdigit():
+        v = int(re.sub(r"\D", "", m.group(1)) or 0)
+    return v if v is not None and 100 <= target and v <= target else None
+
+
+def read_duel(rows: list[Row], size: tuple[int, int], ctx: dict) -> list[Observation]:
+    """The two teams' cash either side of the clock in the two-team cash modes: yours on the left."""
+    W = size[0]
+    left = right = None
+    for row in rows:
+        for i, w in enumerate(row.words):
+            v = _duel_cash(row.words, i)
+            if v is None:
+                continue
+            if w.x + w.w / 2 < 0.5 * W:
+                left = v if left is None else left
+            else:
+                right = v if right is None else right
+    if left is None or right is None:
+        return []
+    return [Observation(SCORES, "#1", values=(("#1", left), ("#2", right)), text=f"duel {left} v {right}")]
 
 
 def read_menu(zones: dict[str, list[Row]], ctx: dict) -> list[Observation]:
@@ -540,10 +613,14 @@ def read(zones: dict[str, list[Row]], size: tuple[int, int], ctx: dict) -> list[
     out += read_card(zones.get("card", []), ctx)
     out += read_board(zones.get("board", []), size, ctx)
     out += read_self(zones.get("self", []), ctx)
+    out += read_duel(zones.get("timer", []), size, ctx)
+    if death_bar(ctx.get("frame")):
+        out.append(Observation(DEAD, values=("bar",), text="the red bar"))
     clock = read_top(zones.get("timer", []), size, ctx)
     out += clock or read_menu(zones, ctx)
     if not clock and any(o.kind in (FEED_KILL, FEED_DEATH, FEED_ASSIST, TALLY_KILL, TALLY_ASSIST, HEAD_KILL,
-                                    SCORES) or (o.kind == DEAD and not o.values) for o in out):
+                                    SCORES) or (o.kind == DEAD and "weak" not in o.values)
+                         for o in out):
         out.append(Observation(IN_MATCH, text="combat"))
     return out
 

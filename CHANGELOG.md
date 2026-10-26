@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Active Game Tracking** holds up on small and blurry screens. The red death bar is found by its colour, so a
+  death counts at any resolution even when the words on it can't be read, and one death is all its sightings
+  together (the bar, its words now and then, the card, the killer's name spelt a few ways), the name read most
+  often being the killer. RESPAWN AVAILABLE IN (and the bar's BY misread) count as the death bar. Your health
+  under the HUD keeps a match going, so one where the clock can't be read isn't split in two. The two-team cash
+  modes' `$300/1,000` either side of the clock gives the teams' cash. A placement shown after a guessed end puts
+  the result right. Tried on a 360p recording of a match: before, 2 matches and 2 of its 14 deaths; now 1
+  match, all 14 deaths, and the loss.
+
 ## [2.4.0]
 
 ### Added
