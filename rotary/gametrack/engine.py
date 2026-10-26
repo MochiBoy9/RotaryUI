@@ -226,9 +226,12 @@ class Tracker:
                 # One death however it's read (the bar's colour, its words, the card, a killer's name spelt
                 # three ways): every sighting counts towards it, and the name read most often is the killer.
                 if o.other:
-                    self._dead_names.append((now, o.other))
+                    self._dead_names = self._dead_names[-59:] + [(now, o.other)]
                 if (DEAD, "") not in frame or o.other:
                     frame[(DEAD, "")] = o
+                continue
+            if o.kind == DEAD:
+                frame.setdefault((DEAD, "weak"), o)  # FREE CAMERA…: kept apart, so it can't hide the bar
                 continue
             frame.setdefault(o.key, o)               # once per frame
         for key, o in frame.items():

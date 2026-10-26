@@ -309,6 +309,13 @@ def test_one_death_from_sightings_spread_out_and_spelt_differently():
     assert tr.match.stats["deaths"] == 2 and tr.killer == ""
 
 
+def test_free_camera_in_the_same_frame_doesnt_hide_the_bar():
+    tr = Tracker(finals.PROFILE)
+    tr.start_match(0, manual=False)
+    frames(tr, [ob(DEAD, values=("weak",)), ob(DEAD, values=("bar",))], 10, 1)
+    assert tr.dead and tr.match.stats["deaths"] == 1
+
+
 def test_the_hud_keeps_a_match_going():
     tr = Tracker(finals.PROFILE)
     tr.start_match(0, manual=False)

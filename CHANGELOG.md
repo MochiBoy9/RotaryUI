@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.4.1]
 
 ### Changed
 - **Active Game Tracking** holds up on small and blurry screens. The red death bar is found by its colour, so a
