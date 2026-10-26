@@ -91,6 +91,7 @@ class NotchWindow(QWidget):
     moved = Signal(object)           # where it was put: {"docked", "edge", "x", "y", "up"} (None = back home)
     customize = Signal()             # "Customise the notch…" from its menu
     assist = Signal()                # "Solve what's on screen" from its menu
+    assist_note = Signal()           # "Ask with a note…": the same, with a line of context first
 
     # Base geometry in logical px at the default text size: (width, height, bottom corner radius).
     COLLAPSED = (188.0, 30.0, 13.0)
@@ -1742,6 +1743,7 @@ class NotchWindow(QWidget):
         m = QMenu()
         m.addAction("Open the rotary", self.clicked.emit)
         m.addAction("Solve what's on screen", self.assist.emit)
+        m.addAction("Ask with a note…", self.assist_note.emit)
         if self.answer is not None:
             m.addAction("Copy the answer", self.copy_answer)
             m.addAction("Dismiss the answer", self.clear_answer)

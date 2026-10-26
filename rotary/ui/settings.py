@@ -17,9 +17,9 @@ import threading
 from PySide6.QtCore import QEvent, QFileInfo, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QIcon, QImage, QKeySequence, QLinearGradient,
                            QPainter, QPainterPath, QPixmap, QRadialGradient, QShortcut)
-from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFileIconProvider,
-                               QGridLayout, QHBoxLayout, QKeySequenceEdit, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
+from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QCheckBox, QColorDialog, QComboBox, QDialog,
+                               QFileDialog, QFileIconProvider, QGridLayout, QHBoxLayout, QKeySequenceEdit, QLabel,
+                               QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
                                QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from .. import (DATA_DIR, DEVICE, MAC, OS_NAME, ROOT, WIN, __version__, apps, integrations, keys, obs, system, update,
@@ -37,7 +37,7 @@ from .notch import DEFAULT_OPTIONS as DEFAULT_ISLAND
 from .notch import system_24h
 from .glass import BUNDLED_TEXT, ICONS, SYSTEM_TEXT, TEXT, app_icon, blur_backdrop, font, font_choices, white
 from .widgets import (Card, ColorPicker, GlyphPicker, KeyRecorder, PresetTile, Row, Segmented, SliderControl,
-                      Switch, icon_button, scroll_page, stylesheet)
+                      Swatch, Switch, icon_button, scroll_page, stylesheet)
 
 log = logging.getLogger(__name__)
 _uid = itertools.count(1)
@@ -2153,6 +2153,43 @@ class AssistPage(QWidget):
         c.add(Row("Screen assist on the rotary", "An item that answers what's on screen when you choose it",
                   self.add_btn))
         v.addWidget(c)
+
+        c = Card("Screen glow", "The edges of your screen glow while the AI works on an answer, like Siri, and fade "
+                                "once it's in.")
+        self.glow = Segmented([(k, name) for k, (name, _c) in ai.GLOWS.items()] + [("custom", "Custom"),
+                                                                                    ("off", "Off")], a["glow"])
+        self.glow.setFixedWidth(420)
+        self.glow.changed.connect(lambda k: self._set("glow", k))
+        c.add(Row("Look", "Siri is the purple-blue one", self.glow))
+        sw = QWidget()
+        sh = QHBoxLayout(sw)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.setSpacing(4)
+        self.glow_swatches = []
+        for i in range(3):
+            b = Swatch("#ffffff")
+            b.setCheckable(False)
+            b.clicked.connect(lambda _=False, i=i: self._pick_glow(i))
+            sh.addWidget(b)
+            self.glow_swatches.append(b)
+        self.glow_colors_row = c.add(Row("Custom colours", "Click a colour to change it; they flow around the screen "
+                                                           "in this order", sw))
+        v.addWidget(c)
+
+        c = Card("Your note", "Extra context for the AI besides what's on screen: which question you mean, what you "
+                              "want to know, your class or level. Fully optional.")
+        self.note = QLineEdit()
+        self.note.setMaxLength(ai.NOTE_MAX)
+        self.note.setFixedWidth(300)
+        self.note.setPlaceholderText("e.g. I'm in 10th grade chemistry")
+        self.note.editingFinished.connect(self._save_note)
+        c.add(Row("Always tell the AI", "Goes along with every question; leave it empty for none", self.note))
+        self.ask_note = Switch(bool(a["ask_note"]))
+        self.ask_note.toggled.connect(lambda on: self._set("ask_note", bool(on)))
+        c.add(Row("Ask for a note each time", "A box to type a note into before it looks at the screen; press Enter "
+                                              "with it empty to ask without one. Right-click the notch → Ask with a "
+                                              "note… works either way", self.ask_note))
+        v.addWidget(c)
         v.addStretch(1)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -2167,6 +2204,20 @@ class AssistPage(QWidget):
 
     def _prov(self):
         return ai.BY_ID.get(self.provider.currentData() or "", ai.PROVIDERS[0])
+
+    def _save_note(self) -> None:
+        if self.note.text().strip() != ai.settings(self.app.cfg)["note"]:
+            self._set("note", self.note.text().strip())
+
+    def _pick_glow(self, i: int) -> None:
+        colors = list(ai.settings(self.app.cfg)["glow_colors"]) + list(ai.GLOW_COLORS)
+        colors = colors[:3]
+        c = QColorDialog.getColor(QColor(colors[i]), self, "Glow colour")
+        if not c.isValid():
+            return
+        colors[i] = c.name().upper()
+        self.app.cfg.setdefault("assist", {})["glow"] = "custom"
+        self._set("glow_colors", colors)
 
     def _set(self, key: str, value) -> None:
         self.app.cfg.setdefault("assist", {})[key] = value
@@ -2307,6 +2358,16 @@ class AssistPage(QWidget):
         self.add_btn.setText("On the rotary" if self._has_item() else "Add to the rotary")
         self.hotkey.set_combo(a["hotkey"])
         self.seconds.set_value(str(int(a.get("seconds", 20))))
+        self.glow.set_value(str(a["glow"]))
+        custom = (list(a["glow_colors"]) + list(ai.GLOW_COLORS))[:3]
+        for b, col in zip(self.glow_swatches, custom):
+            b.color = col
+            b.setToolTip(col)
+            b.update()
+        self.glow_colors_row.setVisible(a["glow"] == "custom")
+        if not self.note.hasFocus():
+            self.note.setText(str(a["note"] or ""))
+        self.ask_note.set_silent(bool(a["ask_note"]))
 
 
 class CameraPage(QWidget):

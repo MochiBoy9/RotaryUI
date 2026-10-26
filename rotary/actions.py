@@ -183,6 +183,10 @@ DEFAULT_CONFIG = {
         "seconds": 20,           # how long the answer stays on the notch
         # win+alt+a | ctrl+alt+a | ctrl+shift+a | off. Not Ctrl + Alt + a letter on Windows: that's AltGr there.
         "hotkey": "ctrl+alt+a" if MAC else "win+alt+a",
+        "glow": "siri",          # the screen's edges glow while the AI answers: siri | aurora | sunset | custom | off
+        "glow_colors": ["#3D7BFF", "#7A5CFF", "#BF5AF2"],   # the colours of "custom"
+        "note": "",              # a note that always goes with the screenshot ("I'm in Chemistry 101")
+        "ask_note": False,       # ask for a note (optional) each time, before looking at the screen
     },
 }
 

@@ -10,6 +10,10 @@ The AI always attempts an answer: with no question on screen it goes by context 
 the window title) or sums up the page. The answer comes back as JSON: whether there was a question, the option
 to pick for multiple choice ("B"), a short answer for the notch and a longer, detailed one for its hover card
 (which is also what Copy copies).
+
+While the AI works on an answer the edges of the screen glow, Siri-style, in a purple-blue gradient (or one of the
+other looks, your own colours, or not at all), and a note you add ("I'm in Chemistry 101", "only the second
+question") goes along with the screenshot to say what you're after.
 """
 from __future__ import annotations
 
@@ -67,8 +71,18 @@ PROVIDERS = [
 ]
 BY_ID = {p.id: p for p in PROVIDERS}
 
+# The screen's glow while the AI answers: id → (name, colours around the edge).
+GLOWS = {
+    "siri": ("Siri", ("#3D7BFF", "#7A5CFF", "#BF5AF2", "#5AC8FA")),
+    "aurora": ("Aurora", ("#30D158", "#64D2FF", "#0A84FF", "#5E5CE6")),
+    "sunset": ("Sunset", ("#FF9F0A", "#FF375F", "#BF5AF2", "#FF6482")),
+}
+GLOW_COLORS = list(GLOWS["siri"][1][:3])     # where "Custom" starts
+NOTE_MAX = 500           # characters of the note that go along with the screenshot
+
 DEFAULTS = {"provider": "gemini", "models": {}, "urls": {}, "keys": {}, "seconds": 20,
-            "hotkey": "ctrl+alt+a" if MAC else "win+alt+a"}
+            "hotkey": "ctrl+alt+a" if MAC else "win+alt+a",
+            "glow": "siri", "glow_colors": GLOW_COLORS, "note": "", "ask_note": False}
 TIMEOUT = 90.0
 MAX_REPLY = 32_000_000   # bytes: no AI answer (or list of models) comes anywhere near this
 ANTHROPIC_VERSION = "2026-10-21"
@@ -103,21 +117,46 @@ a Steam store page, what the game is, its price and its reviews; on an article, 
 it does and anything wrong with it.
 
 If there are several questions, answer the one that is selected, highlighted or most prominent. Work the problem \
-out carefully before you answer."""
+out carefully before you answer.
+
+The person may add a note to the screenshot. It comes from them, so go by it: it says which question they mean, \
+what they want to know, or gives context (their course, their level, the language to answer in). It's only a \
+note: still answer what's on the screen."""
 
 ASK = "What is the question or problem on this screen (or, if there's none, what's on it), and what's the answer?"
 SHORT_MAX = 80           # characters: the notch's one-line answer
 DETAIL_MAX = 800         # characters: the hover card's longer answer, and what Copy copies
 
 
-def ask_text(app: str = "", title: str = "") -> str:
-    """The question sent with the screenshot, with the app in front and its window title as context clues."""
+def ask_text(app: str = "", title: str = "", note: str = "") -> str:
+    """The question sent with the screenshot, with the app in front and its window title as context clues, and
+    the person's own note, if they added one."""
     clues = []
     if app:
         clues.append(f"the app in front is {_short(app, 60)}")
     if title:
         clues.append(f'its window title is "{_short(title, 200)}"')
-    return f"{ASK} ({'; '.join(clues)}.)" if clues else ASK
+    text = f"{ASK} ({'; '.join(clues)}.)" if clues else ASK
+    note = _short(note, NOTE_MAX)
+    return f"{text}\n\nMy note: {note}" if note else text
+
+
+def glow_colors(cfg: dict | None) -> list[str]:
+    """The colours around the screen's edge while the AI answers; [] when the glow is off."""
+    a = settings(cfg)
+    look = str(a.get("glow") or "off")
+    if look in GLOWS:
+        return list(GLOWS[look][1])
+    if look == "custom":
+        out = [str(c) for c in a.get("glow_colors") or [] if re.fullmatch(r"#[0-9a-fA-F]{6}", str(c))]
+        return out or list(GLOW_COLORS)
+    return []
+
+
+def note_for(cfg: dict | None, extra: str = "") -> str:
+    """The note that goes with the screenshot: the one kept on the Screen assist page, then this time's."""
+    parts = [" ".join(str(t or "").split()) for t in (settings(cfg).get("note"), extra)]
+    return " ".join(p for p in parts if p)
 
 
 class AssistError(Exception):
@@ -403,16 +442,17 @@ def _int(v) -> int:
         return 0
 
 
-def solve(image: bytes, cfg: dict | None, mime: str = "image/jpeg", app: str = "", title: str = "") -> Answer:
+def solve(image: bytes, cfg: dict | None, mime: str = "image/jpeg", app: str = "", title: str = "",
+          note: str = "") -> Answer:
     """Send one screenshot and return the answer (blocking; run it off the UI thread). `app` and `title`, the app
-    in front and its window title, go along as context clues."""
+    in front and its window title, go along as context clues; `note` is the person's own (note_for())."""
     missing = ready(cfg)
     if missing:
         raise AssistError(missing)
     p = provider(cfg)
     model = model_for(cfg, p)
     url, headers, body = build_request(p, model, url_for(cfg, p), key_for(cfg, p), image, mime,
-                                       ask_text(app, title))
+                                       ask_text(app, title, note))
     log.info("screen assist: asking %s (%s), %d KB", p.name, model, len(image) // 1024)
     text = reply_text(p.style, post(url, headers, body, p, model))
     ans = parse_reply(text)
