@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QObject, QFileSystemWatcher, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QConicalGradient, QFont, QFontMetricsF,
+from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QConicalGradient, QCursor, QFont, QFontMetricsF,
                            QGuiApplication, QIcon, QLinearGradient, QPainter, QPen, QPixmap, QRadialGradient)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
@@ -35,7 +35,9 @@ from .gestures import GestureEngine, GestureSettings, HandednessTracker, HandFea
 from .tracker import CameraStatus, TrackerThread, TrackResult
 from .ui.dial import CORNERS, DialWindow, VolumeRing
 from .ui.glass import TEXT, family, font, load_fonts, set_text_font
+from .ui.glow import ScreenGlow
 from .ui.notch import NotchWindow
+from .ui.note import NoteBox
 from .ui.pill import AMBER, BLUE, GRAY, GREEN, RED, PillWindow
 
 log = logging.getLogger(__name__)
@@ -368,8 +370,13 @@ class RotaryApp(QObject):
         self.notch.customize.connect(lambda: self.show_window("notch"))
         self.notch.timer_done.connect(self._on_timer_done)
         self.notch.assist.connect(self.start_assist)
+        self.notch.assist_note.connect(self.ask_with_note)
         self._assist_busy = False
         self._assist_until = 0.0           # keeps the notch up for a screen-assist message
+        self._assist_note = ""             # this time's note for the AI (the note box)
+        self.glow = ScreenGlow()           # the screen's edges glow while the AI answers
+        self.note_box = NoteBox()
+        self.note_box.asked.connect(lambda note: self.start_assist(note))
         self.live = LiveWatcher(self)
         self.live.state.connect(self.notch.set_live)
         self.live.state.connect(self._on_live_state)
@@ -1203,15 +1210,34 @@ class RotaryApp(QObject):
         self._update_notch()
         self._flash_msg(text, kind, accent, seconds)
 
-    def start_assist(self) -> None:
-        """Screen assist (hotkey, rotary item, notch menu): grab the screen, ask the AI, answer on the notch."""
+    def _assist_can_start(self) -> bool:
         if self._assist_busy:
-            return
+            return False
         missing = assist.ready(self.cfg)
         if missing:
             self._assist_message(missing, "error", AMBER, 6.0)
             self.show_window("assist")
+            return False
+        return True
+
+    def ask_with_note(self) -> None:
+        """The note box first (notch menu → Ask with a note, or every time when the Screen assist page says so):
+        a line of extra context for the AI, which can stay empty."""
+        if not self._assist_can_start():
             return
+        if self.engine.phase == Phase.OPEN:
+            self._close_manual("assist")
+        QTimer.singleShot(120, self.note_box.open)
+
+    def start_assist(self, note: str | None = None) -> None:
+        """Screen assist (hotkey, rotary item, notch menu): grab the screen, ask the AI, answer on the notch.
+        `note` is what the note box got ('' = nothing typed); None asks for one first if that's switched on."""
+        if note is None and assist.settings(self.cfg).get("ask_note"):
+            self.ask_with_note()
+            return
+        if not self._assist_can_start():
+            return
+        self._assist_note = note or ""
         self._assist_busy = True
         self.notch.clear_answer()
         if self.engine.phase == Phase.OPEN:
@@ -1222,22 +1248,27 @@ class RotaryApp(QObject):
         if self.dial.isVisible() and tries < 20:          # wait for the rotary to get out of the picture
             QTimer.singleShot(120, lambda: self._assist_capture(tries + 1))
             return
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         try:
-            shot = assist.capture()
+            shot = assist.capture(screen)
         except assist.AssistError as e:
             self._assist_busy = False
             self._assist_message(str(e), "error", RED, 5.0)
             return
         self._update_notch()
         self._flash_msg("Looking at your screen…", "pulse", BLUE, assist.TIMEOUT + 5)
+        if self._fs_state != 3:                           # never over an exclusive full-screen game
+            self.glow.start(assist.glow_colors(self.cfg), screen,
+                            bool(self.cfg.get("appearance", {}).get("reduce_motion", False)))
         cfg = self.cfg
+        note = assist.note_for(cfg, self._assist_note)
 
         def work():
             try:
                 app_name, title = modes.foreground()       # context clues for the AI: "steam", "Elden Ring on Steam"
                 if title.lower().startswith(("rotaryui", "gesture rotary")):
                     app_name = title = ""                   # our own settings window says nothing about the screen
-                self.assist_done.emit(assist.solve(shot, cfg, app=app_name, title=title), "")
+                self.assist_done.emit(assist.solve(shot, cfg, app=app_name, title=title, note=note), "")
             except assist.AssistError as e:
                 self.assist_done.emit(None, str(e))
             except Exception:
@@ -1247,6 +1278,7 @@ class RotaryApp(QObject):
 
     def _on_assist_done(self, ans, err: str) -> None:
         self._assist_busy = False
+        self.glow.stop()                                  # answered: the glow fades out
         self._flash = None
         if err:
             self._assist_message(err[:110], "error", RED, 6.0)
